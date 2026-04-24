@@ -1,9 +1,9 @@
-// Base color palette
+// Base color palette — Grab brand palette
 export const colorPalette = {
   // Neutral colors
   white: "rgb(255, 255, 255)",
   black: "rgb(0, 0, 0)",
-  nearBlack: "rgb(17, 24, 39)",
+  nearBlack: "rgb(31, 41, 55)", // Charcoal #1F2937
 
   // Gray scale
   darkGray: "rgb(31, 41, 55)",
@@ -12,25 +12,25 @@ export const colorPalette = {
   lightGray: "rgb(243, 244, 246)",
   lighterGray: "rgb(249, 250, 251)",
 
-  // Blue scale
-  blue: "rgb(42, 50, 179)", // Modern vibrant blue
-  lightBlue: "rgb(96, 165, 250)",
-  darkBlue: "rgb(37, 99, 235)",
+  // Grab Green scale
+  grabGreen: "rgb(0, 177, 79)",       // #00B14F — Grab primary green
+  grabGreenDark: "rgb(0, 150, 64)",   // #009640 — darker hover
+  grabGreenLight: "rgb(230, 247, 236)", // #E6F7EC — light accent
 
   // Status colors
-  red: "rgb(239, 68, 68)",
-  darkRed: "rgb(220, 38, 38)",
-  orange: "rgb(245, 158, 11)",
-  green: "rgb(34, 197, 94)",
-  darkGreen: "rgb(22, 163, 74)",
+  red: "rgb(225, 29, 72)",            // #E11D48 — Grab danger
+  darkRed: "rgb(190, 18, 60)",
+  orange: "rgb(255, 184, 0)",         // #FFB800 — Grab warning
+  green: "rgb(0, 177, 79)",           // alias — same as Grab green for success
+  darkGreen: "rgb(0, 150, 64)",
 } as const;
 
-// Semantic color configuration
+// Semantic color configuration — all keys preserved for downstream consumers
 export const colorConfig = {
-  // Primary colors
-  primaryColor: colorPalette.blue,
+  // Primary colors — Grab Green
+  primaryColor: colorPalette.grabGreen,
   primaryForegroundColor: colorPalette.white,
-  primaryHoverColor: colorPalette.darkBlue,
+  primaryHoverColor: colorPalette.grabGreenDark,
 
   // Secondary colors
   secondaryColor: colorPalette.lightGray,
@@ -50,14 +50,14 @@ export const colorConfig = {
   warningColor: colorPalette.orange,
   warningForegroundColor: colorPalette.white,
 
-  // Success colors
+  // Success colors — Grab Green
   successColor: colorPalette.green,
   successForegroundColor: colorPalette.white,
   successHoverColor: colorPalette.darkGreen,
 
   // Info colors
-  infoColor: colorPalette.lightBlue,
-  infoForegroundColor: colorPalette.white,
+  infoColor: colorPalette.grabGreenLight,
+  infoForegroundColor: colorPalette.grabGreen,
 
   // Border colors
   borderColor: colorPalette.mediumLightGray,
@@ -67,4 +67,7 @@ export const colorConfig = {
   textPrimary: colorPalette.nearBlack,
   textSecondary: colorPalette.darkGray,
   textMuted: colorPalette.mediumGray,
+
+  // Extra Grab accent (available for new components)
+  accentLight: colorPalette.grabGreenLight,
 } as const;

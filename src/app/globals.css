@@ -1,8 +1,13 @@
 @import "tailwindcss";
 
+/* ── Grab brand CSS custom properties ───────────────────────────────────── */
 :root {
   --background: #ffffff;
-  --foreground: #111827;
+  --foreground: #1f2937;
+
+  --grab-green: #00b14f;
+  --grab-green-dark: #009640;
+  --grab-green-light: #e6f7ec;
 }
 
 @theme inline {
@@ -47,9 +52,9 @@ a {
   text-decoration: none;
 }
 
-/* Focus styles for accessibility */
+/* Focus outline — Grab Green (replaces default browser blue) */
 *:focus-visible {
-  outline: 2px solid rgb(42, 50, 179);
+  outline: 2px solid var(--grab-green);
   outline-offset: 2px;
 }
 

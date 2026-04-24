@@ -1,305 +1,125 @@
-'use client';
-import React from 'react';
-import {
-  Button,
-  Card,
-  Tag,
-  Space,
-  Table,
-  Input,
-  Select,
-  Row,
-  Col,
-  Divider,
-  Badge,
-  Alert,
-  Progress
-} from 'antd';
-import {
-  PlusOutlined,
-  SearchOutlined,
-  CheckCircleOutlined,
-  CloseCircleOutlined,
-  InfoCircleOutlined,
-  HeartOutlined
-} from '@ant-design/icons';
-import { useQuery } from '@tanstack/react-query';
-import { checkHealthHealthGet } from '@/client/sdk.gen';
-import SectionContainer from '@/components/SectionContainer';
-import { HText, PText } from '@/components/MyText';
-import AuthStatus from '@/components/AuthStatus';
+"use client";
 
-const { Search } = Input;
+import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import dynamic from 'next/dynamic';
+import { AimOutlined } from '@ant-design/icons';
+import PlaceSearch from '@/components/PlaceSearch';
+import { usePulseReport } from '@/hooks/usePulseReport';
+import { colorConfig } from '@/config/colors';
+import { PText } from '@/components/MyText';
+import type { PlaceSearchResult, PulseCompetitor, PulseRequest } from '@/types/pulse';
 
-// Sample data for the table
-const columns = [
-  {
-    title: 'Name',
-    dataIndex: 'name',
-    key: 'name',
-  },
-  {
-    title: 'Email',
-    dataIndex: 'email',
-    key: 'email',
-  },
-  {
-    title: 'Role',
-    dataIndex: 'role',
-    key: 'role',
-    render: (role: string) => {
-      const color = role === 'Admin' ? 'error' : role === 'Instructor' ? 'processing' : 'success';
-      return <Tag color={color}>{role}</Tag>;
-    },
-  },
-  {
-    title: 'Status',
-    dataIndex: 'status',
-    key: 'status',
-    render: (status: string) => {
-      const color = status === 'Active' ? 'success' : 'default';
-      return <Tag color={color}>{status}</Tag>;
-    },
-  },
-];
+const MapView = dynamic(() => import('@/components/MapView'), { ssr: false });
+const PulseReport = dynamic(() => import('@/components/PulseReport'), { ssr: false });
 
-const data = [
-  {
-    key: '1',
-    name: 'John Doe',
-    email: 'john@example.com',
-    role: 'Admin',
-    status: 'Active',
-  },
-  {
-    key: '2',
-    name: 'Jane Smith',
-    email: 'jane@example.com',
-    role: 'Instructor',
-    status: 'Active',
-  },
-  {
-    key: '3',
-    name: 'Bob Johnson',
-    email: 'bob@example.com',
-    role: 'Trainee',
-    status: 'Inactive',
-  },
-];
+const DEFAULT_LAT = parseFloat(process.env.NEXT_PUBLIC_DEFAULT_LAT ?? '1.3521');
+const DEFAULT_LNG = parseFloat(process.env.NEXT_PUBLIC_DEFAULT_LNG ?? '103.8198');
+const DEFAULT_COUNTRY = process.env.NEXT_PUBLIC_DEFAULT_COUNTRY ?? 'SGP';
 
-export default function Home() {
-  const { data: healthData, isLoading, error, refetch } = useQuery({
-    queryKey: ['health'],
-    queryFn: async () => {
-      const response = await checkHealthHealthGet();
-      return response.data;
-    },
-    enabled: false, // Only fetch when button is clicked
-  });
+export default function HomePage() {
+  const [request, setRequest] = useState<PulseRequest | null>(null);
+  const [searchSlot, setSearchSlot] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    setSearchSlot(document.getElementById('pp-search-slot'));
+  }, []);
+
+  const { data } = usePulseReport(request);
+
+  const handleSearchSelect = (result: PlaceSearchResult) => {
+    setRequest({
+      placeId: result.placeId,
+      lat: result.lat,
+      lng: result.lng,
+      name: result.name,
+      country: DEFAULT_COUNTRY,
+    });
+  };
+
+  const handlePickLocation = (coords: { lat: number; lng: number }) => {
+    setRequest({
+      lat: coords.lat,
+      lng: coords.lng,
+      name: 'Dropped pin',
+      country: DEFAULT_COUNTRY,
+    });
+  };
+
+  const handleCompetitorClick = (competitor: PulseCompetitor) => {
+    setRequest({
+      placeId: competitor.placeId,
+      lat: competitor.lat,
+      lng: competitor.lng,
+      name: competitor.name,
+      country: DEFAULT_COUNTRY,
+    });
+  };
+
+  const handleClose = () => setRequest(null);
+
+  const selectedPlace = useMemo(
+    () =>
+      request
+        ? { lat: request.lat, lng: request.lng, name: request.name ?? 'Selected place' }
+        : null,
+    [request],
+  );
+
+  const biasCoords = request
+    ? { lat: request.lat, lng: request.lng }
+    : { lat: DEFAULT_LAT, lng: DEFAULT_LNG };
 
   return (
-    <SectionContainer>
-      <div style={{ marginBottom: '24px' }}>
-        <AuthStatus />
-      </div>
+    <div style={{ position: 'relative', flex: 1, minHeight: 0, width: '100%' }}>
+      <MapView
+        selectedPlace={selectedPlace}
+        competitors={data?.competitors}
+        nearestMrt={data?.accessibility.nearestMrt ?? null}
+        heatmapPoints={data?.density.heatmapPoints}
+        onPickLocation={handlePickLocation}
+      />
 
-      {/* Health Check Section */}
-      <Card style={{ marginBottom: '24px' }}>
-        <Space direction="vertical" style={{ width: '100%' }}>
-          <HText variant="h5">Health Check</HText>
-          <Space>
-            <Button
-              type="primary"
-              icon={<HeartOutlined />}
-              onClick={() => refetch()}
-              loading={isLoading}
-            >
-              Check Health
-            </Button>
-          </Space>
-          {error && (
-            <Alert
-              message="Health Check Failed"
-              description={(error as Error).message}
-              type="error"
-              showIcon
-            />
-          )}
-          {healthData !== undefined && (
-            <Alert
-              message="Health Check Passed"
-              description={<pre style={{ margin: 0 }}>{JSON.stringify(healthData, null, 2)}</pre>}
-              type="success"
-              showIcon
-            />
-          )}
-        </Space>
-      </Card>
+      {!request && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 16,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: colorConfig.backgroundColor,
+            borderRadius: 999,
+            padding: '10px 18px',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            zIndex: 5,
+            pointerEvents: 'none',
+          }}
+        >
+          <AimOutlined style={{ color: colorConfig.primaryColor, fontSize: 16 }} />
+          <PText variant="small" style={{ margin: 0, color: colorConfig.textSecondary }}>
+            Search a place or tap the map to generate a Pulse Report
+          </PText>
+        </div>
+      )}
 
-      <HText variant="h1">FireSim Pro Training Simulator</HText>
-      <HText variant="h5" style={{ fontWeight: 400, marginTop: '8px' }}>
-        User Management
-      </HText>
-      <PText style={{ marginTop: '16px', marginBottom: '24px' }}>
-        Manage system users and their permissions
-      </PText>
+      <PulseReport
+        request={request}
+        onCompetitorClick={handleCompetitorClick}
+        onClose={handleClose}
+      />
 
-      <Card
-        title={<HText variant="h5">System Users</HText>}
-        style={{ marginBottom: '24px' }}
-      >
-        <Space direction="vertical" size="large" style={{ width: '100%' }}>
-          {/* Search and Actions */}
-          <Row justify="space-between" align="middle">
-            <Col>
-              <Space size="middle">
-                <Search
-                  placeholder="Search users..."
-                  style={{ width: 300 }}
-                  prefix={<SearchOutlined />}
-                />
-                <Select
-                  placeholder="Filter by role"
-                  style={{ width: 150 }}
-                  options={[
-                    { value: 'all', label: 'All Roles' },
-                    { value: 'admin', label: 'Admin' },
-                    { value: 'instructor', label: 'Instructor' },
-                    { value: 'trainee', label: 'Trainee' },
-                  ]}
-                />
-              </Space>
-            </Col>
-            <Col>
-              <Button type="primary" icon={<PlusOutlined />} size="large">
-                Create User
-              </Button>
-            </Col>
-          </Row>
-
-          {/* Stats Cards */}
-          <Row gutter={16}>
-            <Col span={6}>
-              <Card size="small">
-                <Space>
-                  <Badge count={12} color="#22C55E" />
-                  <PText>Active Users</PText>
-                </Space>
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card size="small">
-                <Space>
-                  <Badge count={3} color="#EF4444" />
-                  <PText>Admins</PText>
-                </Space>
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card size="small">
-                <Space>
-                  <Badge count={5} color="#3B82F6" />
-                  <PText>Instructors</PText>
-                </Space>
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card size="small">
-                <Space>
-                  <Badge count={4} color="#84CC16" />
-                  <PText>Trainees</PText>
-                </Space>
-              </Card>
-            </Col>
-          </Row>
-
-          <Divider />
-
-          {/* User Table */}
-          <Table 
-            columns={columns} 
-            dataSource={data} 
-            pagination={false}
-            style={{ marginTop: '16px' }}
-          />
-        </Space>
-      </Card>
-
-      {/* Theme Testing Section */}
-      <Card
-        title={<HText variant="h5">Theme Testing</HText>}
-        style={{ marginBottom: '24px' }}
-      >
-        <Space direction="vertical" size="large" style={{ width: '100%' }}>
-          <div>
-            <HText variant="h4">Buttons</HText>
-            <Space wrap>
-              <Button type="primary">Primary Button</Button>
-              <Button>Default Button</Button>
-              <Button type="dashed">Dashed Button</Button>
-              <Button type="link">Link Button</Button>
-              <Button danger>Danger Button</Button>
-            </Space>
-          </div>
-
-          <div>
-            <HText variant="h4">Tags</HText>
-            <Space wrap>
-              <Tag color="success">Active</Tag>
-              <Tag color="error">Admin</Tag>
-              <Tag color="processing">Instructor</Tag>
-              <Tag color="warning">Trainee</Tag>
-              <Tag>Observer</Tag>
-              <Tag color="default">Inactive</Tag>
-            </Space>
-          </div>
-
-          <div>
-            <HText variant="h4">Alerts</HText>
-            <Space direction="vertical" style={{ width: '100%' }}>
-              <Alert
-                message="Success Alert"
-                description="This is a success alert with the theme colors."
-                type="success"
-                icon={<CheckCircleOutlined />}
-                showIcon
-              />
-              <Alert
-                message="Error Alert"
-                description="This is an error alert with the theme colors."
-                type="error"
-                icon={<CloseCircleOutlined />}
-                showIcon
-              />
-              <Alert
-                message="Info Alert"
-                description="This is an info alert with the theme colors."
-                type="info"
-                icon={<InfoCircleOutlined />}
-                showIcon
-              />
-            </Space>
-          </div>
-
-          <div>
-            <HText variant="h4">Progress Bars</HText>
-            <Space direction="vertical" style={{ width: '100%' }}>
-              <div>
-                <PText>Default Progress</PText>
-                <Progress percent={30} />
-              </div>
-              <div>
-                <PText>Success Progress</PText>
-                <Progress percent={70} status="success" />
-              </div>
-              <div>
-                <PText>Error Progress</PText>
-                <Progress percent={50} status="exception" />
-              </div>
-            </Space>
-          </div>
-        </Space>
-      </Card>
-    </SectionContainer>
+      {searchSlot &&
+        createPortal(
+          <PlaceSearch
+            onSelect={handleSearchSelect}
+            bias={biasCoords}
+            country={DEFAULT_COUNTRY}
+          />,
+          searchSlot,
+        )}
+    </div>
   );
 }

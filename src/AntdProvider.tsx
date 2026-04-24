@@ -11,12 +11,12 @@ function AntdProvider({ children }: { children: React.ReactNode }) {
       theme={{
         algorithm: theme.defaultAlgorithm,
         token: {
-          // Primary colors
+          // Primary colors — Grab Green
           colorPrimary: colorConfig.primaryColor,
           colorSuccess: colorConfig.successColor,
           colorWarning: colorConfig.warningColor,
           colorError: colorConfig.dangerColor,
-          colorInfo: colorConfig.infoColor,
+          colorInfo: colorConfig.primaryColor,
 
           // Background colors
           colorBgContainer: colorConfig.backgroundColor,
@@ -71,7 +71,7 @@ function AntdProvider({ children }: { children: React.ReactNode }) {
           Card: {
             borderRadiusLG: 12,
             colorBorderSecondary: colorPalette.lightGray,
-            boxShadowTertiary: '0 4px 16px rgba(0,0,0,0.12)'
+            boxShadowTertiary: '0 4px 16px rgba(0,0,0,0.12)',
           },
           Table: {
             headerBg: colorConfig.backgroundSecondary,
@@ -80,7 +80,7 @@ function AntdProvider({ children }: { children: React.ReactNode }) {
           Menu: {
             itemSelectedBg: colorConfig.primaryColor,
             itemSelectedColor: colorConfig.primaryForegroundColor,
-            itemActiveBg: colorConfig.primaryColor,
+            itemActiveBg: colorConfig.primaryHoverColor,
             itemHoverBg: colorConfig.primaryColor,
             itemHoverColor: colorConfig.primaryForegroundColor,
             iconSize: 22,

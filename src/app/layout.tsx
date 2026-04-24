@@ -18,8 +18,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Fire Drill",
-  description: "Fire Drill Application",
+  title: "PlacePulse — GrabMaps Location Intelligence",
+  description: "Live neighborhood briefings for any place in Southeast Asia",
 };
 
 export default function RootLayout({

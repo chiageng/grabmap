@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" fill="none" role="img" aria-label="PlacePulse logo">
+  <!-- Rounded square background in Grab Green -->
+  <rect width="36" height="36" rx="9" fill="#00B14F"/>
+  <!-- Map pin shape: circle head + downward point, centered -->
+  <path
+    d="M18 7C14.134 7 11 10.134 11 14C11 18.5 18 29 18 29C18 29 25 18.5 25 14C25 10.134 21.866 7 18 7Z"
+    fill="white"
+  />
+  <!-- Inner dot of map pin -->
+  <circle cx="18" cy="14" r="3" fill="#00B14F"/>
+</svg>
