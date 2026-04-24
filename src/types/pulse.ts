@@ -53,8 +53,26 @@ export interface PulseAccessibility {
   score: number;
 }
 
+export type PulseSectionTone = 'positive' | 'neutral' | 'warning' | 'danger';
+
+export interface PulseSummarySection {
+  title: string;
+  body: string;
+  tone?: PulseSectionTone;
+}
+
+export interface PulseSummaryVerdict {
+  label: string;
+  tone: PulseSectionTone;
+}
+
 export interface PulseSummary {
+  /** Concatenation of verdict + sections — preserved for share/export + backward compat. */
   text: string;
+  /** Optional headline verdict shown above sections (scout mode always sets this). */
+  verdict?: PulseSummaryVerdict;
+  /** Ordered content sections rendered as discrete blocks in the UI. */
+  sections: PulseSummarySection[];
   generatedAt: string;
   model?: string;
 }

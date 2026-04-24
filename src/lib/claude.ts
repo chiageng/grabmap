@@ -1,16 +1,23 @@
 /**
  * Anthropic Claude wrapper — server-side only.
  *
- * Provides `generatePulseSummary` which accepts a PulseReport (without the
- * summary field populated) and returns a PulseSummary. If ANTHROPIC_API_KEY
- * is unset or the Claude call throws for any reason, a deterministic fallback
- * summary built from the report numbers is returned so the UI is never empty.
+ * Provides two summarizers that both return a structured PulseSummary
+ * (verdict + 4 sections) so the UI can render section-by-section cards:
+ *   - generatePulseSummary: generic report for a known location
+ *   - generateScoutAdvice:  scouting advice for a "should I open X here?" prompt
+ *
+ * Both are defensive: if ANTHROPIC_API_KEY is unset or Claude fails/returns
+ * malformed JSON, a deterministic fallback is produced from the raw numbers
+ * so the UI is never empty.
  */
 
 import Anthropic from '@anthropic-ai/sdk';
 import type {
   PulseReport,
   PulseSummary,
+  PulseSummarySection,
+  PulseSummaryVerdict,
+  PulseSectionTone,
   PulsePlace,
   PulseDensity,
   PulseCompetitor,
@@ -18,43 +25,93 @@ import type {
   ScoutParse,
 } from '@/types/pulse';
 
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
-
 const DEFAULT_MODEL = 'claude-sonnet-4-6';
-const MAX_TOKENS = 350;
-const TEMPERATURE = 0.4;
+const MAX_TOKENS = 900;
+const TEMPERATURE = 0.3;
+
+const SECTION_TITLES = {
+  competition: 'Competitive Landscape',
+  accessibility: 'Accessibility & Reach',
+  neighborhood: 'Neighborhood Mix',
+  recommendation: 'Recommendation',
+} as const;
 
 // ---------------------------------------------------------------------------
-// Prompt builders
+// Helpers — defensive JSON parsing + text derivation
 // ---------------------------------------------------------------------------
 
-/**
- * Builds a compact, structured prompt for Claude from the report data.
- * We deliberately keep it tight (< ~300 tokens of input) so the round-trip
- * stays fast and cheap. No marketing language — just the raw numbers.
- */
-function buildUserPrompt(
+const VALID_TONES: readonly PulseSectionTone[] = [
+  'positive',
+  'neutral',
+  'warning',
+  'danger',
+];
+
+function normaliseTone(v: unknown): PulseSectionTone {
+  if (typeof v === 'string') {
+    const t = v.toLowerCase().trim() as PulseSectionTone;
+    if (VALID_TONES.includes(t)) return t;
+  }
+  return 'neutral';
+}
+
+function normaliseSection(v: unknown): PulseSummarySection | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  const title = typeof o.title === 'string' ? o.title.trim() : '';
+  const body = typeof o.body === 'string' ? o.body.trim() : '';
+  if (!title || !body) return null;
+  return { title, body, tone: normaliseTone(o.tone) };
+}
+
+function normaliseVerdict(v: unknown): PulseSummaryVerdict | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const o = v as Record<string, unknown>;
+  const label = typeof o.label === 'string' ? o.label.trim() : '';
+  if (!label) return undefined;
+  return { label, tone: normaliseTone(o.tone) };
+}
+
+function tryParseJson(raw: string): unknown {
+  const cleaned = raw.trim().replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
+  return JSON.parse(cleaned);
+}
+
+/** Concatenation of verdict + sections for preview/share/export. */
+function flattenToText(
+  verdict: PulseSummaryVerdict | undefined,
+  sections: PulseSummarySection[],
+): string {
+  const parts: string[] = [];
+  if (verdict) parts.push(`${verdict.label}.`);
+  for (const s of sections) {
+    parts.push(`${s.title}: ${s.body}`);
+  }
+  return parts.join('\n\n');
+}
+
+// ---------------------------------------------------------------------------
+// Structured prompt builders — both shared and mode-specific helpers
+// ---------------------------------------------------------------------------
+
+function buildContextBlock(
   place: PulsePlace,
   density: PulseDensity,
   competitors: PulseCompetitor[],
   accessibility: PulseAccessibility,
 ): string {
   const topCompetitors = competitors
-    .slice(0, 5)
+    .slice(0, 8)
     .map(
       (c) =>
         `  - ${c.name} (${c.category}, ${Math.round(c.distanceMeters)}m away${c.rating ? `, rated ${c.rating}` : ''})`,
     )
     .join('\n');
-
   const mrtLine = accessibility.nearestMrt
-    ? `Nearest MRT: ${accessibility.nearestMrt.name} — ${accessibility.nearestMrt.walkingMinutes} min walk (${Math.round(accessibility.nearestMrt.walkingDistanceMeters)}m).`
-    : 'No MRT data available.';
-
+    ? `Nearest MRT: ${accessibility.nearestMrt.name} — ${accessibility.nearestMrt.walkingMinutes} min walk (${accessibility.nearestMrt.walkingDistanceMeters}m).`
+    : 'No MRT data available within 1km.';
   const topCategories = density.categoryBreakdown
-    .slice(0, 3)
+    .slice(0, 5)
     .map((c) => `${c.category} (${c.count})`)
     .join(', ');
 
@@ -77,99 +134,159 @@ ${topCompetitors || '  None identified'}
 Accessibility:
   ${mrtLine}
   Accessibility score: ${accessibility.score}/100
-
-Write a 3–4 sentence intelligence briefing for a Southeast Asian SME operator considering this location. Use the exact numbers provided. Be direct, specific, and actionable.
 `.trim();
 }
 
-const SYSTEM_PROMPT = `You are a concise location intelligence analyst specialising in Southeast Asia SME retail and F&B strategy.
-Write in plain English. Be specific and actionable.
-Do NOT invent statistics or facts not present in the data.
-Do NOT use marketing language or generic phrases like "great location" or "vibrant area".
-Stick strictly to the numbers given.
-Context: Singapore/SEA SME operators who need honest, data-driven location insights.`;
+const JSON_SCHEMA_DOC = `Return ONLY a JSON object matching this TypeScript type — no prose, no markdown, no code fences:
+
+{
+  "verdict": { "label": string, "tone": "positive" | "neutral" | "warning" | "danger" },
+  "sections": [
+    { "title": "${SECTION_TITLES.competition}",   "body": string, "tone": "positive" | "neutral" | "warning" | "danger" },
+    { "title": "${SECTION_TITLES.accessibility}", "body": string, "tone": "positive" | "neutral" | "warning" | "danger" },
+    { "title": "${SECTION_TITLES.neighborhood}",  "body": string, "tone": "positive" | "neutral" | "warning" | "danger" },
+    { "title": "${SECTION_TITLES.recommendation}","body": string, "tone": "positive" | "neutral" | "warning" | "danger" }
+  ]
+}
+
+Rules:
+  - Exactly 4 sections in that order with those exact titles.
+  - Each body is 2-4 sentences of plain English. No markdown inside bodies.
+  - Use ONLY the numbers provided. Never invent statistics, demographics, foot traffic, or open-dates.
+  - Address the operator directly ("you", "your") where it reads natural.
+  - Pick the tone that matches the section content:
+      "positive" = advantageous finding
+      "neutral"  = factual / descriptive
+      "warning"  = cautionary but not blocking
+      "danger"   = significant concern
+  - Verdict label is 1-4 words (e.g. "Strong fit", "Workable but competitive", "Oversaturated", "Quiet location").`;
 
 // ---------------------------------------------------------------------------
-// Fallback summary (deterministic, no AI)
+// Generic PulseSummary — "what is this place like commercially"
 // ---------------------------------------------------------------------------
 
-function buildFallbackSummary(
+const PULSE_SYSTEM = `You are a location intelligence analyst for Southeast Asia SME retail and F&B.
+You are given concrete data about a specific place and its neighborhood.
+Write a structured briefing that helps an operator understand the commercial character of this location.
+
+${JSON_SCHEMA_DOC}
+
+Section content guide for this (generic) mode:
+  1. Competitive Landscape — describe same-category competitor density + the closest named ones. Quote numbers.
+  2. Accessibility & Reach — describe MRT / walkability, and what the ${SECTION_TITLES.accessibility.toLowerCase()} score implies.
+  3. Neighborhood Mix — describe the dominant POI categories nearby and what kind of neighborhood this is (office, F&B cluster, residential, mixed).
+  4. Recommendation — what this pattern means for an operator already at this location (hours, menu, positioning).
+
+Verdict label should be a short commercial snapshot phrase (e.g. "Dense F&B cluster", "Quiet office tower", "Mixed retail hub").`;
+
+function fallbackPulseSummary(
   place: PulsePlace,
   density: PulseDensity,
   competitors: PulseCompetitor[],
   accessibility: PulseAccessibility,
-): string {
-  const mrtPart = accessibility.nearestMrt
-    ? `Nearest MRT is ${accessibility.nearestMrt.name} (${accessibility.nearestMrt.walkingMinutes} min walk).`
-    : 'No MRT station data was found nearby.';
+  generatedAt: string,
+): PulseSummary {
+  const dominant = density.categoryBreakdown[0]?.category ?? 'mixed';
+  const verdict: PulseSummaryVerdict = {
+    label:
+      density.totalNearby1km >= 60
+        ? `Dense ${dominant} cluster`
+        : density.totalNearby1km >= 20
+          ? `Active ${dominant} area`
+          : 'Quiet location',
+    tone: 'neutral',
+  };
 
-  const competitorNames = competitors
+  const closestNames = competitors
     .slice(0, 3)
-    .map((c) => c.name)
+    .map((c) => `${c.name} (${Math.round(c.distanceMeters)}m)`)
     .join(', ');
 
-  const competitorPart =
-    competitors.length > 0
-      ? `Closest competitors include: ${competitorNames}.`
-      : 'No same-category competitors were identified within the search radius.';
+  const sections: PulseSummarySection[] = [
+    {
+      title: SECTION_TITLES.competition,
+      body:
+        competitors.length === 0
+          ? `No same-category competitors were identified within the search radius. Within 300m there are ${density.totalNearby300m} POIs total, ${density.sameCategoryNearby300m} of which share your category.`
+          : `Within 300m there are ${density.totalNearby300m} POIs, ${density.sameCategoryNearby300m} sharing your category. Closest named competitors: ${closestNames}.`,
+      tone:
+        density.sameCategoryNearby300m >= 6
+          ? 'warning'
+          : density.sameCategoryNearby300m >= 3
+            ? 'neutral'
+            : 'positive',
+    },
+    {
+      title: SECTION_TITLES.accessibility,
+      body: accessibility.nearestMrt
+        ? `Nearest MRT is ${accessibility.nearestMrt.name}, a ${accessibility.nearestMrt.walkingMinutes}-minute walk (${accessibility.nearestMrt.walkingDistanceMeters}m). Accessibility score is ${accessibility.score}/100 based on transit proximity and local cluster density.`
+        : `No MRT station was found within 1km. Accessibility score is ${accessibility.score}/100, driven entirely by local cluster density since transit reach is weak.`,
+      tone:
+        accessibility.score >= 70
+          ? 'positive'
+          : accessibility.score >= 40
+            ? 'neutral'
+            : 'warning',
+    },
+    {
+      title: SECTION_TITLES.neighborhood,
+      body: `Within 1km there are ${density.totalNearby1km} points of interest. The dominant categories nearby are ${
+        density.categoryBreakdown
+          .slice(0, 3)
+          .map((c) => `${c.category} (${c.count})`)
+          .join(', ') || 'mixed'
+      }.`,
+      tone: 'neutral',
+    },
+    {
+      title: SECTION_TITLES.recommendation,
+      body:
+        density.sameCategoryNearby300m >= 5
+          ? 'Competition within 300m is high — differentiate on menu, pricing, or hours rather than going head-to-head.'
+          : density.totalNearby1km < 20
+            ? 'Low surrounding density suggests dependence on destination traffic. Consider delivery and loyalty programs to offset limited walk-in volume.'
+            : 'Moderate local density — standard retail hours and menu should perform normally. Lean into whatever the dominant nearby category brings in foot traffic.',
+      tone: 'neutral',
+    },
+  ];
 
-  return (
-    `${place.name} sits in a cluster of ${density.totalNearby300m} POIs within 300m, ` +
-    `${density.sameCategoryNearby300m} of which share your category. ` +
-    `Within 1km there are ${density.totalNearby1km} points of interest. ` +
-    `${mrtPart} ` +
-    `${competitorPart} ` +
-    `Accessibility score: ${accessibility.score}/100.`
-  );
+  return {
+    text: flattenToText(verdict, sections),
+    verdict,
+    sections,
+    generatedAt,
+    model: undefined,
+  };
 }
 
-// ---------------------------------------------------------------------------
-// Public export
-// ---------------------------------------------------------------------------
-
-/**
- * Generates an AI-powered Pulse summary for a report.
- *
- * The `report` parameter is the full PulseReport but with `summary` field
- * expected to be overwritten by the caller — we only read the other fields.
- *
- * Returns a PulseSummary with `model` set to the Claude model used, or
- * undefined if the fallback was triggered.
- */
 export async function generatePulseSummary(
   report: Omit<PulseReport, 'summary'>,
 ): Promise<PulseSummary> {
   const generatedAt = new Date().toISOString();
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
-  // If no API key is configured, return a deterministic fallback immediately.
   if (!apiKey) {
-    return {
-      text: buildFallbackSummary(
-        report.place,
-        report.density,
-        report.competitors,
-        report.accessibility,
-      ),
+    return fallbackPulseSummary(
+      report.place,
+      report.density,
+      report.competitors,
+      report.accessibility,
       generatedAt,
-      model: undefined,
-    };
+    );
   }
 
   const model = process.env.ANTHROPIC_MODEL ?? DEFAULT_MODEL;
-
   try {
     const client = new Anthropic({ apiKey });
-
     const message = await client.messages.create({
       model,
       max_tokens: MAX_TOKENS,
       temperature: TEMPERATURE,
-      system: SYSTEM_PROMPT,
+      system: PULSE_SYSTEM,
       messages: [
         {
           role: 'user',
-          content: buildUserPrompt(
+          content: buildContextBlock(
             report.place,
             report.density,
             report.competitors,
@@ -179,33 +296,40 @@ export async function generatePulseSummary(
       ],
     });
 
-    // Extract text from the first content block
-    const firstBlock = message.content[0];
-    const text =
-      firstBlock && firstBlock.type === 'text' ? firstBlock.text.trim() : '';
+    const block = message.content[0];
+    const text = block && block.type === 'text' ? block.text : '';
+    if (!text.trim()) throw new Error('Empty response from Claude');
 
-    if (!text) {
-      throw new Error('Claude returned an empty response');
-    }
+    const parsed = tryParseJson(text) as Record<string, unknown>;
+    const verdict = normaliseVerdict(parsed.verdict);
+    const rawSections = Array.isArray(parsed.sections) ? parsed.sections : [];
+    const sections = rawSections
+      .map(normaliseSection)
+      .filter((s): s is PulseSummarySection => s !== null);
 
-    return { text, generatedAt, model };
+    if (sections.length === 0) throw new Error('No valid sections in response');
+
+    return {
+      text: flattenToText(verdict, sections),
+      verdict,
+      sections,
+      generatedAt,
+      model,
+    };
   } catch (err) {
     console.error('[Claude] generatePulseSummary failed, using fallback:', err);
-    return {
-      text: buildFallbackSummary(
-        report.place,
-        report.density,
-        report.competitors,
-        report.accessibility,
-      ),
+    return fallbackPulseSummary(
+      report.place,
+      report.density,
+      report.competitors,
+      report.accessibility,
       generatedAt,
-      model: undefined,
-    };
+    );
   }
 }
 
 // ---------------------------------------------------------------------------
-// Scout mode — conversational prompt parsing + scouting advice
+// Scout parse — prompt → structured intent
 // ---------------------------------------------------------------------------
 
 const SCOUT_PARSE_SYSTEM = `You extract structured intent from a Southeast Asian SME operator's location-scouting question.
@@ -244,7 +368,6 @@ function fallbackScoutParse(prompt: string): ScoutParse {
   };
 }
 
-/** Parses a user's free-form scouting prompt into a structured ScoutParse. */
 export async function parseScoutPrompt(prompt: string): Promise<ScoutParse> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return fallbackScoutParse(prompt);
@@ -261,8 +384,7 @@ export async function parseScoutPrompt(prompt: string): Promise<ScoutParse> {
     });
     const block = message.content[0];
     const text = block && block.type === 'text' ? block.text.trim() : '';
-    const cleaned = text.replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
-    const parsed = JSON.parse(cleaned) as Partial<ScoutParse>;
+    const parsed = tryParseJson(text) as Partial<ScoutParse>;
 
     if (
       typeof parsed.businessType !== 'string' ||
@@ -290,20 +412,25 @@ export async function parseScoutPrompt(prompt: string): Promise<ScoutParse> {
   }
 }
 
-const SCOUT_ADVICE_SYSTEM = `You are a location-scouting advisor for Southeast Asian SME operators.
-Given a business concept, a target neighborhood, and concrete data about direct competitors within 1km, write a 5-7 sentence advisory covering:
-  1. Clear viability verdict — "strong fit", "workable but competitive", or "risky / oversaturated"
-  2. Direct competitor density analysis using the exact numbers provided
-  3. Accessibility pros/cons (MRT walk time)
-  4. One concrete positioning or differentiation suggestion tailored to the business type
+// ---------------------------------------------------------------------------
+// Scout advice — "should I open X here?"
+// ---------------------------------------------------------------------------
 
-Rules:
-  - Use only the numbers provided. Never invent statistics, foot traffic, demographics, or open-dates.
-  - Plain English, no marketing fluff, no generic phrases like "vibrant area".
-  - Address the operator directly ("you", "your").
-  - Start with the verdict sentence.`;
+const SCOUT_SYSTEM = `You are a location-scouting advisor for Southeast Asian SME operators.
+An operator wants to open a specific business type at a specific neighborhood. You have concrete data about direct competitors and the surrounding POIs.
 
-function buildScoutUserPrompt(
+${JSON_SCHEMA_DOC}
+
+Section content guide for this (scout) mode:
+  1. ${SECTION_TITLES.competition} — number of direct competitors within the 1km radius, naming the closest 2-3 and their distances. Call out saturation level.
+  2. ${SECTION_TITLES.accessibility} — MRT walk time, what that means for a ${SECTION_TITLES.accessibility.toLowerCase()} perspective of the business type.
+  3. ${SECTION_TITLES.neighborhood} — the dominant POI categories around. What crowd does this neighborhood pull (office workers, shoppers, residents)? Stick to what the categories imply.
+  4. ${SECTION_TITLES.recommendation} — one concrete positioning or differentiation suggestion tailored to the business type and the competitive reality above.
+
+Verdict label should be an actionable scouting call, e.g. "Strong fit", "Workable but competitive", "Oversaturated", "Risky opening", "Limited upside".
+Verdict tone: positive if viable, neutral if mixed, warning if competitive, danger if heavily saturated or poorly served.`;
+
+function buildScoutContextBlock(
   parse: ScoutParse,
   place: PulsePlace,
   density: PulseDensity,
@@ -342,12 +469,10 @@ Neighborhood density context:
 Accessibility:
   ${mrtLine}
   Accessibility score: ${accessibility.score}/100
-
-Write the advisory now.
 `.trim();
 }
 
-function buildScoutFallback(
+function fallbackScoutSummary(
   parse: ScoutParse,
   place: PulsePlace,
   density: PulseDensity,
@@ -355,35 +480,74 @@ function buildScoutFallback(
   accessibility: PulseAccessibility,
   totalCompetitorsFound: number,
   competitorRadiusKm: number,
-): string {
-  const verdict =
+  generatedAt: string,
+): PulseSummary {
+  const verdict: PulseSummaryVerdict =
     totalCompetitorsFound >= 10
-      ? `Risky — the ${competitorRadiusKm}km radius is oversaturated with ${totalCompetitorsFound} direct competitors in your ${parse.businessType} space.`
+      ? { label: 'Oversaturated', tone: 'danger' }
       : totalCompetitorsFound >= 4
-        ? `Workable but competitive — ${totalCompetitorsFound} direct ${parse.businessType} competitors operate within ${competitorRadiusKm}km.`
+        ? { label: 'Workable but competitive', tone: 'warning' }
         : totalCompetitorsFound >= 1
-          ? `Promising fit — only ${totalCompetitorsFound} direct ${parse.businessType} competitors within ${competitorRadiusKm}km.`
-          : `Strong opportunity — no direct ${parse.businessType} competitors identified within ${competitorRadiusKm}km.`;
+          ? { label: 'Promising fit', tone: 'positive' }
+          : { label: 'Strong opportunity', tone: 'positive' };
 
-  const mrtPart = accessibility.nearestMrt
-    ? `Nearest MRT is ${accessibility.nearestMrt.name}, a ${accessibility.nearestMrt.walkingMinutes}-minute walk.`
-    : 'No MRT station was found nearby.';
+  const closestNames = competitors
+    .slice(0, 3)
+    .map((c) => `${c.name} (${Math.round(c.distanceMeters)}m)`)
+    .join(', ');
 
-  const compNames = competitors.slice(0, 3).map((c) => c.name).join(', ');
-  const compLine = competitors.length > 0 ? `Closest competitors: ${compNames}.` : '';
+  const sections: PulseSummarySection[] = [
+    {
+      title: SECTION_TITLES.competition,
+      body:
+        totalCompetitorsFound === 0
+          ? `No direct ${parse.businessType} competitors were found within ${competitorRadiusKm}km of ${place.name}. This is unusually clear — verify demand through foot-traffic observation before committing.`
+          : `${totalCompetitorsFound} direct ${parse.businessType} competitor${totalCompetitorsFound === 1 ? '' : 's'} operate within ${competitorRadiusKm}km. Closest: ${closestNames || 'n/a'}.`,
+      tone: verdict.tone,
+    },
+    {
+      title: SECTION_TITLES.accessibility,
+      body: accessibility.nearestMrt
+        ? `${accessibility.nearestMrt.name} is ${accessibility.nearestMrt.walkingMinutes} min walk away. Accessibility score is ${accessibility.score}/100 — transit-anchored footfall should support a ${parse.businessType}.`
+        : `No MRT within 1km. Accessibility score is ${accessibility.score}/100. Expect dependence on local/destination traffic rather than transit pass-through.`,
+      tone:
+        accessibility.score >= 70
+          ? 'positive'
+          : accessibility.score >= 40
+            ? 'neutral'
+            : 'warning',
+    },
+    {
+      title: SECTION_TITLES.neighborhood,
+      body: `Within 1km of ${place.name} there are ${density.totalNearby1km} POIs. Dominant categories: ${
+        density.categoryBreakdown
+          .slice(0, 3)
+          .map((c) => `${c.category} (${c.count})`)
+          .join(', ') || 'mixed'
+      }.`,
+      tone: 'neutral',
+    },
+    {
+      title: SECTION_TITLES.recommendation,
+      body:
+        totalCompetitorsFound >= 10
+          ? `Don't compete head-on. If you open a ${parse.businessType} here, differentiate on a specific angle — unique dish, extended hours, delivery specialization — or consider a less saturated nearby zone.`
+          : totalCompetitorsFound >= 4
+            ? `Entry is possible but margins will be tight. Lock down a positioning angle (price, niche, hours) before signing a lease.`
+            : `Limited direct competition means lower head-to-head risk. Validate demand signals (visible foot traffic, nearby anchor tenants) before opening.`,
+      tone: 'neutral',
+    },
+  ];
 
-  return (
-    `${verdict} ` +
-    `Near ${place.name} there are ${density.totalNearby1km} POIs within 1km total. ` +
-    `${mrtPart} ${compLine} ` +
-    `Accessibility score is ${accessibility.score}/100.`
-  );
+  return {
+    text: flattenToText(verdict, sections),
+    verdict,
+    sections,
+    generatedAt,
+    model: undefined,
+  };
 }
 
-/**
- * Generates scouting-focused advisory text. Returns a PulseSummary so it drops
- * into the existing PulseReport UI without structural changes.
- */
 export async function generateScoutAdvice(
   report: Omit<PulseReport, 'summary'>,
   parse: ScoutParse,
@@ -394,19 +558,16 @@ export async function generateScoutAdvice(
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
-    return {
-      text: buildScoutFallback(
-        parse,
-        report.place,
-        report.density,
-        report.competitors,
-        report.accessibility,
-        totalCompetitorsFound,
-        competitorRadiusKm,
-      ),
+    return fallbackScoutSummary(
+      parse,
+      report.place,
+      report.density,
+      report.competitors,
+      report.accessibility,
+      totalCompetitorsFound,
+      competitorRadiusKm,
       generatedAt,
-      model: undefined,
-    };
+    );
   }
 
   const model = process.env.ANTHROPIC_MODEL ?? DEFAULT_MODEL;
@@ -414,13 +575,13 @@ export async function generateScoutAdvice(
     const client = new Anthropic({ apiKey });
     const message = await client.messages.create({
       model,
-      max_tokens: 600,
-      temperature: 0.4,
-      system: SCOUT_ADVICE_SYSTEM,
+      max_tokens: MAX_TOKENS,
+      temperature: TEMPERATURE,
+      system: SCOUT_SYSTEM,
       messages: [
         {
           role: 'user',
-          content: buildScoutUserPrompt(
+          content: buildScoutContextBlock(
             parse,
             report.place,
             report.density,
@@ -433,23 +594,36 @@ export async function generateScoutAdvice(
       ],
     });
     const block = message.content[0];
-    const text = block && block.type === 'text' ? block.text.trim() : '';
-    if (!text) throw new Error('Empty scout response');
-    return { text, generatedAt, model };
+    const text = block && block.type === 'text' ? block.text : '';
+    if (!text.trim()) throw new Error('Empty scout response');
+
+    const parsed = tryParseJson(text) as Record<string, unknown>;
+    const verdict = normaliseVerdict(parsed.verdict);
+    const rawSections = Array.isArray(parsed.sections) ? parsed.sections : [];
+    const sections = rawSections
+      .map(normaliseSection)
+      .filter((s): s is PulseSummarySection => s !== null);
+
+    if (sections.length === 0) throw new Error('No valid sections in scout response');
+
+    return {
+      text: flattenToText(verdict, sections),
+      verdict,
+      sections,
+      generatedAt,
+      model,
+    };
   } catch (err) {
     console.error('[Claude] generateScoutAdvice failed, using fallback:', err);
-    return {
-      text: buildScoutFallback(
-        parse,
-        report.place,
-        report.density,
-        report.competitors,
-        report.accessibility,
-        totalCompetitorsFound,
-        competitorRadiusKm,
-      ),
+    return fallbackScoutSummary(
+      parse,
+      report.place,
+      report.density,
+      report.competitors,
+      report.accessibility,
+      totalCompetitorsFound,
+      competitorRadiusKm,
       generatedAt,
-      model: undefined,
-    };
+    );
   }
 }
