@@ -13,6 +13,8 @@ const COMPETITOR_ORANGE = '#FF8C00';
 const MRT_BLUE = '#1677FF';
 const HEATMAP_LAYER_ID = 'pulse-heatmap-layer';
 const HEATMAP_SOURCE_ID = 'pulse-heatmap-source';
+const HEATMAP_LAYER_SECONDARY_ID = 'pulse-heatmap-layer-secondary';
+const HEATMAP_SOURCE_SECONDARY_ID = 'pulse-heatmap-source-secondary';
 const MRT_LINE_SOURCE_ID = 'pulse-mrt-line-source';
 const MRT_LINE_LAYER_ID = 'pulse-mrt-line-layer';
 
@@ -31,6 +33,9 @@ interface MapViewProps {
   competitors?: PulseCompetitor[];
   nearestMrt?: PulseNearestTransit | null;
   heatmapPoints?: PulseHeatmapPoint[];
+  /** Heatmap points for the second compared location — rendered in a distinct
+   *  blue/cyan ramp so it doesn't visually merge with the primary cluster. */
+  secondaryHeatmapPoints?: PulseHeatmapPoint[];
   /**
    * Visual mode for the heatmap layer:
    *   - 'all' (default): green ramp representing overall POI density
@@ -156,6 +161,7 @@ const MapView = React.memo(function MapView({
   competitors,
   nearestMrt,
   heatmapPoints,
+  secondaryHeatmapPoints,
   heatmapMode = 'all',
   onPickLocation,
 }: MapViewProps) {
@@ -469,6 +475,79 @@ const MapView = React.memo(function MapView({
       whenStyleReady((map) => removeLayerAndSource(map, HEATMAP_LAYER_ID, HEATMAP_SOURCE_ID));
     };
   }, [heatmapPoints, heatmapMode, whenStyleReady]);
+
+  // ── Secondary heatmap layer (compare mode) ────────────────────────────────
+  // Uses a blue/cyan ramp to match the `2` pin so the two clusters are
+  // visually distinguishable when both locations have nearby heatmaps.
+  useEffect(() => {
+    if (!secondaryHeatmapPoints?.length) {
+      whenStyleReady((map) =>
+        removeLayerAndSource(map, HEATMAP_LAYER_SECONDARY_ID, HEATMAP_SOURCE_SECONDARY_ID),
+      );
+      return;
+    }
+
+    whenStyleReady((map) => {
+      removeLayerAndSource(map, HEATMAP_LAYER_SECONDARY_ID, HEATMAP_SOURCE_SECONDARY_ID);
+
+      map.addSource(HEATMAP_SOURCE_SECONDARY_ID, {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: secondaryHeatmapPoints.map((pt) => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [pt.lng, pt.lat] },
+            properties: { weight: pt.weight },
+          })),
+        },
+      });
+
+      const isCompetitorMode = heatmapMode === 'competitors';
+      // Primary uses red/orange ramp → secondary uses blue/teal ramp in the
+      // same tonal intensity so the two clusters read as "hot" for each
+      // location independently without fighting for visual dominance.
+      const colorRamp: maplibregl.DataDrivenPropertyValueSpecification<string> = isCompetitorMode
+        ? [
+            'interpolate',
+            ['linear'],
+            ['heatmap-density'],
+            0, 'rgba(0,0,0,0)',
+            0.2, 'rgba(186,230,253,0.55)',  // pale cyan
+            0.45, 'rgba(56,189,248,0.75)',  // sky blue
+            0.7, 'rgba(22,119,255,0.85)',   // royal blue
+            1, 'rgba(30,64,175,0.95)',      // deep indigo
+          ]
+        : [
+            'interpolate',
+            ['linear'],
+            ['heatmap-density'],
+            0, 'rgba(0,0,0,0)',
+            0.2, 'rgba(186,230,253,0.5)',
+            0.5, 'rgba(56,189,248,0.7)',
+            0.8, 'rgba(22,119,255,0.85)',
+            1, 'rgba(30,64,175,0.95)',
+          ];
+
+      map.addLayer({
+        id: HEATMAP_LAYER_SECONDARY_ID,
+        type: 'heatmap',
+        source: HEATMAP_SOURCE_SECONDARY_ID,
+        paint: {
+          'heatmap-weight': ['interpolate', ['linear'], ['get', 'weight'], 0, 0, 1, 1],
+          'heatmap-intensity': isCompetitorMode ? 1.3 : 1,
+          'heatmap-radius': isCompetitorMode ? 55 : 30,
+          'heatmap-opacity': isCompetitorMode ? 0.75 : 0.7,
+          'heatmap-color': colorRamp,
+        },
+      });
+    });
+
+    return () => {
+      whenStyleReady((map) =>
+        removeLayerAndSource(map, HEATMAP_LAYER_SECONDARY_ID, HEATMAP_SOURCE_SECONDARY_ID),
+      );
+    };
+  }, [secondaryHeatmapPoints, heatmapMode, whenStyleReady]);
 
   // ─── Render ───────────────────────────────────────────────────────────────
 

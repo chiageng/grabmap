@@ -174,7 +174,8 @@ export default function HomePage() {
         secondaryPlace={secondaryPlace}
         competitors={primaryData?.competitors}
         nearestMrt={primaryData?.accessibility.nearestMrt ?? null}
-        heatmapPoints={isComparing ? undefined : primaryData?.density.heatmapPoints}
+        heatmapPoints={primaryData?.density.heatmapPoints}
+        secondaryHeatmapPoints={secondaryData?.density.heatmapPoints}
         heatmapMode={primary?.scoutAnalysis ? 'competitors' : 'all'}
         onPickLocation={handlePickLocation}
       />
@@ -213,7 +214,7 @@ export default function HomePage() {
         />
       )}
 
-      {isComparing && (
+      {isComparing && primary && secondary && (
         <CompareContextBanner
           primary={primary}
           secondary={secondary}
@@ -498,6 +499,29 @@ function CompareContextBanner({
             competitors={secondaryCompetitors}
           />
         </div>
+
+        {/* Heatmap legend — tells user red/blue pair = location 1/2 clusters */}
+        <div
+          style={{
+            display: 'flex',
+            gap: 12,
+            alignItems: 'center',
+            marginTop: 8,
+            fontSize: 11,
+            color: colorConfig.textMuted,
+            flexWrap: 'wrap',
+          }}
+        >
+          <LegendSwatch
+            gradient="linear-gradient(90deg, rgba(254,215,170,0.6), rgba(251,146,60,0.8), rgba(239,68,68,0.9))"
+            label="① heat"
+          />
+          <LegendSwatch
+            gradient="linear-gradient(90deg, rgba(186,230,253,0.6), rgba(56,189,248,0.8), rgba(22,119,255,0.9))"
+            label="② heat"
+          />
+          <span>Cold zones = fewer direct competitors</span>
+        </div>
       </div>
 
       <button
@@ -519,6 +543,23 @@ function CompareContextBanner({
       >
         <CloseOutlined />
       </button>
+    </div>
+  );
+}
+
+function LegendSwatch({ gradient, label }: { gradient: string; label: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <span
+        style={{
+          display: 'inline-block',
+          width: 14,
+          height: 8,
+          borderRadius: 2,
+          background: gradient,
+        }}
+      />
+      <span style={{ fontWeight: 600 }}>{label}</span>
     </div>
   );
 }
