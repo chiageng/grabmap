@@ -5,6 +5,7 @@ import { Alert, Button, Skeleton, Spin } from 'antd';
 import { CloseOutlined, ReloadOutlined } from '@ant-design/icons';
 import { usePulseReport } from '@/hooks/usePulseReport';
 import PlaceIdentityCard from '@/components/pulse/PlaceIdentityCard';
+import RecommendationScore from '@/components/pulse/RecommendationScore';
 import DensitySection from '@/components/pulse/DensitySection';
 import CompetitorRadar from '@/components/pulse/CompetitorRadar';
 import AccessibilityScore from '@/components/pulse/AccessibilityScore';
@@ -212,6 +213,7 @@ export default function PulseReport({ request, onCompetitorClick, onClose }: Pul
             }}
           >
             <PlaceIdentityCard place={data.place} />
+            <RecommendationScore recommendation={data.recommendation} />
             <DensitySection density={data.density} />
             <CompetitorRadar
               competitors={data.competitors}

@@ -27,7 +27,10 @@ import type {
   PulseHeatmapPoint,
   PulseCategoryCount,
   PulseAccessibility,
+  PulseDensity,
   PulseSummary,
+  PulseRecommendation,
+  PulseSectionTone,
   PlaceSearchResult,
 } from '@/types/pulse';
 import type { NormalizedPoi } from '@/lib/grabmaps';
@@ -175,6 +178,74 @@ function computeAccessibilityScore(
   const walkPenalty = walkingMinutes !== null ? Math.min(walkingMinutes * 6, 70) : 70;
   const clusterBonus = Math.min(totalNearby1km / 10, 30);
   return Math.round(Math.max(0, Math.min(100, 100 - walkPenalty + clusterBonus)));
+}
+
+// Recommendation weights — sum to 1. Competition matters most (it's the key
+// scouting signal), accessibility is important, demand is a foot-traffic
+// proxy, diversity is a tiebreaker.
+const RECOMMEND_WEIGHT_COMPETITION = 0.40;
+const RECOMMEND_WEIGHT_ACCESSIBILITY = 0.30;
+const RECOMMEND_WEIGHT_DEMAND = 0.20;
+const RECOMMEND_WEIGHT_DIVERSITY = 0.10;
+
+function recommendationVerdict(score: number): {
+  label: string;
+  tone: PulseSectionTone;
+} {
+  if (score >= 75) return { label: 'Highly recommended', tone: 'positive' };
+  if (score >= 55) return { label: 'Recommended', tone: 'positive' };
+  if (score >= 35) return { label: 'Consider carefully', tone: 'neutral' };
+  if (score >= 15) return { label: 'Not recommended', tone: 'warning' };
+  return { label: 'Avoid', tone: 'danger' };
+}
+
+/**
+ * Combines competitor saturation, accessibility, local demand proxy, and
+ * neighborhood diversity into a single 0-100 "should I open this business
+ * here?" score. Returns sub-scores for UI breakdown.
+ */
+function computeRecommendation(
+  totalCompetitorsFound: number,
+  accessibility: PulseAccessibility,
+  density: PulseDensity,
+): PulseRecommendation {
+  // Competition: zero direct competitors = 100, drops linearly.
+  //   0 comps → 100,  5 → 80,  10 → 60,  15 → 40,  25+ → 0
+  const competition = Math.max(
+    0,
+    Math.min(100, 100 - totalCompetitorsFound * 4),
+  );
+
+  const accessibilityScore = accessibility.score;
+
+  // Demand: total POIs in 1km as foot-traffic proxy. Caps at 100 — a very
+  // active area already saturates this factor.
+  const demand = Math.min(100, density.totalNearby1km);
+
+  // Diversity: number of distinct categories in the top-5 breakdown.
+  //   5 distinct cats → 100, 3 → 60, 1 → 20
+  const diversity = Math.min(100, density.categoryBreakdown.length * 20);
+
+  const score = Math.round(
+    competition * RECOMMEND_WEIGHT_COMPETITION +
+      accessibilityScore * RECOMMEND_WEIGHT_ACCESSIBILITY +
+      demand * RECOMMEND_WEIGHT_DEMAND +
+      diversity * RECOMMEND_WEIGHT_DIVERSITY,
+  );
+
+  const { label, tone } = recommendationVerdict(score);
+
+  return {
+    score,
+    breakdown: {
+      competition: Math.round(competition),
+      accessibility: Math.round(accessibilityScore),
+      demand: Math.round(demand),
+      diversity: Math.round(diversity),
+    },
+    label,
+    tone,
+  };
 }
 
 export async function buildPulseReport(opts: BuildPulseOptions): Promise<BuildPulseResult> {
@@ -500,18 +571,29 @@ export async function buildPulseReport(opts: BuildPulseOptions): Promise<BuildPu
     accessibility = { score: computeAccessibilityScore(null, filtered1km.length) };
   }
 
-  // 6. Assemble + summarize
+  // 6. Compute recommendation BEFORE building reportWithoutSummary so the
+  // summarizer can see it too (reportWithoutSummary is typed as
+  // Omit<PulseReport, 'summary'> which includes recommendation).
+  const densityBlock: PulseDensity = {
+    totalNearby300m: filtered300.length,
+    sameCategoryNearby300m,
+    totalNearby1km: filtered1km.length,
+    heatmapPoints,
+    categoryBreakdown,
+  };
+
+  const recommendation = computeRecommendation(
+    totalCompetitorsFound,
+    accessibility,
+    densityBlock,
+  );
+
   const reportWithoutSummary: Omit<PulseReport, 'summary'> = {
     place,
-    density: {
-      totalNearby300m: filtered300.length,
-      sameCategoryNearby300m,
-      totalNearby1km: filtered1km.length,
-      heatmapPoints,
-      categoryBreakdown,
-    },
+    density: densityBlock,
     competitors,
     accessibility,
+    recommendation,
     meta: {
       fetchedAt: new Date().toISOString(),
       durationMs: 0,

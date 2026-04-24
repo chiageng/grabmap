@@ -80,6 +80,24 @@ export interface PulseSummary {
   model?: string;
 }
 
+export interface PulseRecommendationBreakdown {
+  competition: number;
+  accessibility: number;
+  demand: number;
+  diversity: number;
+}
+
+export interface PulseRecommendation {
+  /** Overall score 0-100. */
+  score: number;
+  /** Sub-scores 0-100 each, shown as a breakdown in the UI. */
+  breakdown: PulseRecommendationBreakdown;
+  /** Short human-readable verdict: "Highly recommended", "Consider carefully", etc. */
+  label: string;
+  /** Color tone for the UI — reuses the PulseSummary palette. */
+  tone: PulseSectionTone;
+}
+
 export interface PulseReportMeta {
   fetchedAt: string;
   durationMs: number;
@@ -91,6 +109,7 @@ export interface PulseReport {
   density: PulseDensity;
   competitors: PulseCompetitor[];
   accessibility: PulseAccessibility;
+  recommendation: PulseRecommendation;
   summary: PulseSummary;
   meta: PulseReportMeta;
 }
