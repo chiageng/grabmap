@@ -1,10 +1,18 @@
 "use client";
 
 import React from 'react';
-import { StarFilled, EnvironmentOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { Button, Tooltip } from 'antd';
+import {
+  StarFilled,
+  EnvironmentOutlined,
+  ClockCircleOutlined,
+  GoogleOutlined,
+  CarOutlined,
+} from '@ant-design/icons';
 import { HText, PText } from '@/components/MyText';
 import { colorConfig } from '@/config/colors';
 import NavigateButton from '@/components/NavigateButton';
+import { googleMapsNavigateUrl, grabBookingUrl } from '@/lib/nav-links';
 import type { PulsePlace, NavigationRoute } from '@/types/pulse';
 
 interface PlaceIdentityCardProps {
@@ -36,7 +44,7 @@ export default function PlaceIdentityCard({ place, onRouteReady }: PlaceIdentity
         gap: 4,
       }}
     >
-      {/* Place name + Navigate button on the right */}
+      {/* Place name + navigation buttons on the right */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
         <HText
           variant="h4"
@@ -44,14 +52,45 @@ export default function PlaceIdentityCard({ place, onRouteReady }: PlaceIdentity
         >
           {name}
         </HText>
-        {onRouteReady && (
-          <NavigateButton
-            destLat={place.lat}
-            destLng={place.lng}
-            destName={name}
-            onRouteReady={onRouteReady}
-          />
-        )}
+        <div style={{ display: 'flex', gap: 4, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <Tooltip title="Open in Google Maps">
+            <Button
+              size="small"
+              shape="circle"
+              icon={<GoogleOutlined />}
+              href={googleMapsNavigateUrl(place.lat, place.lng)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                borderColor: colorConfig.borderColor,
+                color: colorConfig.textSecondary,
+              }}
+            />
+          </Tooltip>
+          <Tooltip title="Book a Grab ride (opens Grab mobile app)">
+            <Button
+              size="small"
+              shape="circle"
+              icon={<CarOutlined />}
+              href={grabBookingUrl(place.lat, place.lng, name)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                borderColor: colorConfig.primaryColor,
+                color: colorConfig.primaryColor,
+                background: colorConfig.backgroundColor,
+              }}
+            />
+          </Tooltip>
+          {onRouteReady && (
+            <NavigateButton
+              destLat={place.lat}
+              destLng={place.lng}
+              destName={name}
+              onRouteReady={onRouteReady}
+            />
+          )}
+        </div>
       </div>
 
       {/* Category + rating row */}
