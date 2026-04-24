@@ -29,6 +29,13 @@ interface MapViewProps {
   competitors?: PulseCompetitor[];
   nearestMrt?: PulseNearestTransit | null;
   heatmapPoints?: PulseHeatmapPoint[];
+  /**
+   * Visual mode for the heatmap layer:
+   *   - 'all' (default): green ramp representing overall POI density
+   *   - 'competitors': red/orange ramp with bigger radius, representing
+   *     direct-competitor density so cold zones indicate alternative spots
+   */
+  heatmapMode?: 'all' | 'competitors';
   onPickLocation?: (coords: { lat: number; lng: number }) => void;
 }
 
@@ -133,6 +140,7 @@ const MapView = React.memo(function MapView({
   competitors,
   nearestMrt,
   heatmapPoints,
+  heatmapMode = 'all',
   onPickLocation,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -360,18 +368,22 @@ const MapView = React.memo(function MapView({
         },
       });
 
-      map.addLayer({
-        id: HEATMAP_LAYER_ID,
-        type: 'heatmap',
-        source: HEATMAP_SOURCE_ID,
-        paint: {
-          // Weight each point by the data-driven weight property.
-          'heatmap-weight': ['interpolate', ['linear'], ['get', 'weight'], 0, 0, 1, 1],
-          'heatmap-intensity': 1,
-          'heatmap-radius': 30,
-          'heatmap-opacity': 0.7,
-          // Neutral (transparent) → yellow-green → Grab green.
-          'heatmap-color': [
+      // Competitor mode = red/orange ramp, larger radius + stronger opacity so
+      // hot zones (competitor clusters) and cold gaps (opportunity areas)
+      // read clearly at a glance.
+      const isCompetitorMode = heatmapMode === 'competitors';
+      const colorRamp: maplibregl.DataDrivenPropertyValueSpecification<string> = isCompetitorMode
+        ? [
+            'interpolate',
+            ['linear'],
+            ['heatmap-density'],
+            0, 'rgba(0,0,0,0)',
+            0.2, 'rgba(254,215,170,0.55)',  // pale amber
+            0.45, 'rgba(251,146,60,0.75)',  // orange
+            0.7, 'rgba(239,68,68,0.85)',    // red
+            1, 'rgba(185,28,28,0.95)',      // dark red
+          ]
+        : [
             'interpolate',
             ['linear'],
             ['heatmap-density'],
@@ -380,7 +392,18 @@ const MapView = React.memo(function MapView({
             0.5, 'rgba(80,200,100,0.8)',
             0.8, 'rgba(0,177,79,0.9)',
             1, 'rgba(0,150,64,1)',
-          ],
+          ];
+
+      map.addLayer({
+        id: HEATMAP_LAYER_ID,
+        type: 'heatmap',
+        source: HEATMAP_SOURCE_ID,
+        paint: {
+          'heatmap-weight': ['interpolate', ['linear'], ['get', 'weight'], 0, 0, 1, 1],
+          'heatmap-intensity': isCompetitorMode ? 1.3 : 1,
+          'heatmap-radius': isCompetitorMode ? 55 : 30,
+          'heatmap-opacity': isCompetitorMode ? 0.75 : 0.7,
+          'heatmap-color': colorRamp,
         },
       });
     });
@@ -388,7 +411,7 @@ const MapView = React.memo(function MapView({
     return () => {
       whenStyleReady((map) => removeLayerAndSource(map, HEATMAP_LAYER_ID, HEATMAP_SOURCE_ID));
     };
-  }, [heatmapPoints, whenStyleReady]);
+  }, [heatmapPoints, heatmapMode, whenStyleReady]);
 
   // ─── Render ───────────────────────────────────────────────────────────────
 

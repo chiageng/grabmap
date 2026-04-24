@@ -286,12 +286,19 @@ export async function buildPulseReport(opts: BuildPulseOptions): Promise<BuildPu
   const sameCategoryNearby300m = filtered300.filter(categoryPredicate).length;
 
   const allNearby = deduplicatePois([...nearby300, ...nearby1km]);
-  const heatmapPoints: PulseHeatmapPoint[] = allNearby
-    .filter((p) => !isSelf(p, place.placeId, lat, lng))
-    .map((p) => {
-      const dist = haversineMeters(p.lat, p.lng, lat, lng);
-      return { lat: p.lat, lng: p.lng, weight: 1 / Math.max(dist, 30) };
-    });
+  // Heatmap content depends on mode:
+  //   - Scout mode (strict + competitor categories): ONLY the matched competitors
+  //     get heatmap weight, with boosted intensity so cold gaps are visually
+  //     obvious as potential alternative locations.
+  //   - Generic mode: every nearby POI contributes — represents overall density.
+  const heatmapPoints: PulseHeatmapPoint[] = strictFilter && competitorCategories
+    ? [] // placeholder — populated below after matchedCompetitors is built
+    : allNearby
+        .filter((p) => !isSelf(p, place.placeId, lat, lng))
+        .map((p) => {
+          const dist = haversineMeters(p.lat, p.lng, lat, lng);
+          return { lat: p.lat, lng: p.lng, weight: 1 / Math.max(dist, 30) };
+        });
 
   const categoryBreakdown = buildCategoryBreakdown(filtered1km);
 
@@ -316,6 +323,17 @@ export async function buildPulseReport(opts: BuildPulseOptions): Promise<BuildPu
     .sort((a, b) => a.distanceMeters - b.distanceMeters);
 
   const totalCompetitorsFound = matchedCompetitors.length;
+
+  // Scout-mode heatmap: competitor-only points with boosted weight so the
+  // resulting heatmap shows exactly where direct competitors cluster. Cold
+  // zones then visually indicate gaps where an operator could consider
+  // opening an alternative location.
+  if (strictFilter && competitorCategories) {
+    for (const c of matchedCompetitors) {
+      const boosted = Math.min(1, (1 / Math.max(c.distanceMeters, 30)) * 50);
+      heatmapPoints.push({ lat: c.lat, lng: c.lng, weight: boosted });
+    }
+  }
 
   let competitorPois: (NormalizedPoi & { distanceMeters: number })[];
   if (strictFilter) {

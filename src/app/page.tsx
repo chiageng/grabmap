@@ -115,6 +115,7 @@ export default function HomePage() {
         competitors={data?.competitors}
         nearestMrt={data?.accessibility.nearestMrt ?? null}
         heatmapPoints={data?.density.heatmapPoints}
+        heatmapMode={scoutAnalysis ? 'competitors' : 'all'}
         onPickLocation={handlePickLocation}
       />
 
@@ -269,6 +270,31 @@ function ScoutContextBanner({
                 ? ` (showing nearest ${analysis.competitorsShown})`
                 : '')}
         </div>
+
+        {analysis.totalCompetitorsFound > 0 && (
+          <div
+            style={{
+              fontSize: 11,
+              color: colorConfig.textMuted,
+              marginTop: 8,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            <span
+              style={{
+                display: 'inline-block',
+                width: 14,
+                height: 8,
+                borderRadius: 2,
+                background:
+                  'linear-gradient(90deg, rgba(254,215,170,0.6), rgba(251,146,60,0.8), rgba(239,68,68,0.9))',
+              }}
+            />
+            Red heat = competitor clusters. Tap a cold spot on the map to analyze it.
+          </div>
+        )}
         <div
           style={{
             display: 'flex',
