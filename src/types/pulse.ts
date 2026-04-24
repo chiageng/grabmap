@@ -38,6 +38,9 @@ export interface PulseCompetitor {
   lng: number;
   rating?: number;
   address?: string;
+  /** 0-1 score combining category match, name match, distance, and rating.
+   *  Higher = more directly competitive to the business type. */
+  relevance?: number;
 }
 
 export interface PulseNearestTransit {

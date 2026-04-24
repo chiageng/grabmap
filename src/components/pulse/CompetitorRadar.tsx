@@ -1,7 +1,8 @@
 "use client";
 
-import React from 'react';
-import { StarFilled } from '@ant-design/icons';
+import React, { useState } from 'react';
+import { Button } from 'antd';
+import { StarFilled, DownOutlined, UpOutlined } from '@ant-design/icons';
 import { HText, PText } from '@/components/MyText';
 import { colorConfig } from '@/config/colors';
 import type { PulseCompetitor } from '@/types/pulse';
@@ -11,13 +12,9 @@ interface CompetitorRadarProps {
   onCompetitorClick?: (competitor: PulseCompetitor) => void;
 }
 
-const MAX_COMPETITORS = 8;
+const DEFAULT_VISIBLE = 8;
 const DISTANCE_THRESHOLD_M = 1000;
 
-/**
- * Formats a raw distance in meters into a human-readable string.
- * Values >= 1000m are shown as "X.Xkm"; below that as "Xm".
- */
 function formatDistance(meters: number): string {
   if (meters >= DISTANCE_THRESHOLD_M) {
     return `${(meters / DISTANCE_THRESHOLD_M).toFixed(1)}km`;
@@ -26,12 +23,18 @@ function formatDistance(meters: number): string {
 }
 
 /**
- * Lists up to 8 nearby competitors as clickable rows.
- * Clicking a row triggers onCompetitorClick so the parent can
- * re-run a Pulse Report centred on that competitor.
+ * Lists competitors sorted by relevance score (from the engine).
+ * Shows the top 8 by default; a "Show all" toggle reveals the full list.
  */
-export default function CompetitorRadar({ competitors, onCompetitorClick }: CompetitorRadarProps) {
-  const visibleCompetitors = competitors.slice(0, MAX_COMPETITORS);
+export default function CompetitorRadar({
+  competitors,
+  onCompetitorClick,
+}: CompetitorRadarProps) {
+  const [expanded, setExpanded] = useState(false);
+
+  const total = competitors.length;
+  const hasMore = total > DEFAULT_VISIBLE;
+  const visibleCompetitors = expanded ? competitors : competitors.slice(0, DEFAULT_VISIBLE);
 
   return (
     <div
@@ -45,11 +48,35 @@ export default function CompetitorRadar({ competitors, onCompetitorClick }: Comp
         gap: 8,
       }}
     >
-      <HText variant="h5" style={{ marginBottom: 4, color: colorConfig.textPrimary }}>
-        Nearby Competitors
-      </HText>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+        }}
+      >
+        <HText variant="h5" style={{ marginBottom: 0, color: colorConfig.textPrimary }}>
+          Nearby Competitors
+        </HText>
+        {total > 0 && (
+          <PText
+            variant="span"
+            style={{
+              color: colorConfig.textMuted,
+              marginBottom: 0,
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px',
+              fontWeight: 600,
+            }}
+          >
+            Sorted by relevance
+          </PText>
+        )}
+      </div>
 
-      {visibleCompetitors.length === 0 && (
+      {total === 0 && (
         <PText variant="small" style={{ color: colorConfig.textMuted }}>
           No competitors found within range.
         </PText>
@@ -59,9 +86,26 @@ export default function CompetitorRadar({ competitors, onCompetitorClick }: Comp
         <CompetitorRow
           key={competitor.placeId ?? `${competitor.name}-${index}`}
           competitor={competitor}
+          rank={index + 1}
           onClick={onCompetitorClick}
         />
       ))}
+
+      {hasMore && (
+        <Button
+          type="text"
+          icon={expanded ? <UpOutlined /> : <DownOutlined />}
+          onClick={() => setExpanded((prev) => !prev)}
+          style={{
+            alignSelf: 'center',
+            marginTop: 4,
+            color: colorConfig.primaryColor,
+            fontWeight: 600,
+          }}
+        >
+          {expanded ? 'Show fewer' : `Show all ${total}`}
+        </Button>
+      )}
     </div>
   );
 }
@@ -70,16 +114,15 @@ export default function CompetitorRadar({ competitors, onCompetitorClick }: Comp
 
 interface CompetitorRowProps {
   competitor: PulseCompetitor;
+  rank: number;
   onClick?: (competitor: PulseCompetitor) => void;
 }
 
-function CompetitorRow({ competitor, onClick }: CompetitorRowProps) {
+function CompetitorRow({ competitor, rank, onClick }: CompetitorRowProps) {
   const isClickable = !!onClick;
 
   const handleClick = () => {
-    if (onClick) {
-      onClick(competitor);
-    }
+    if (onClick) onClick(competitor);
   };
 
   return (
@@ -88,19 +131,16 @@ function CompetitorRow({ competitor, onClick }: CompetitorRowProps) {
       tabIndex={isClickable ? 0 : undefined}
       onClick={handleClick}
       onKeyDown={(e) => {
-        if (isClickable && (e.key === 'Enter' || e.key === ' ')) {
-          handleClick();
-        }
+        if (isClickable && (e.key === 'Enter' || e.key === ' ')) handleClick();
       }}
       style={{
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'space-between',
         padding: '8px 10px',
         borderRadius: 8,
         cursor: isClickable ? 'pointer' : 'default',
         transition: 'background 0.15s',
-        gap: 8,
+        gap: 10,
       }}
       onMouseEnter={(e) => {
         if (isClickable) {
@@ -111,7 +151,26 @@ function CompetitorRow({ competitor, onClick }: CompetitorRowProps) {
         (e.currentTarget as HTMLDivElement).style.background = 'transparent';
       }}
     >
-      {/* Left: name + category */}
+      {/* Rank badge */}
+      <div
+        style={{
+          width: 22,
+          height: 22,
+          borderRadius: 999,
+          background: colorConfig.backgroundSecondary,
+          color: colorConfig.textMuted,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 10,
+          fontWeight: 700,
+          flexShrink: 0,
+        }}
+      >
+        {rank}
+      </div>
+
+      {/* Name + category */}
       <div style={{ minWidth: 0, flex: 1 }}>
         <PText
           variant="small"
@@ -126,12 +185,22 @@ function CompetitorRow({ competitor, onClick }: CompetitorRowProps) {
         >
           {competitor.name}
         </PText>
-        <PText variant="span" style={{ color: colorConfig.textMuted, marginBottom: 0 }}>
+        <PText
+          variant="span"
+          style={{
+            color: colorConfig.textMuted,
+            marginBottom: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            display: 'block',
+          }}
+        >
           {competitor.category}
         </PText>
       </div>
 
-      {/* Right: distance + optional rating */}
+      {/* Right: distance + rating + relevance bar */}
       <div
         style={{
           display: 'flex',
@@ -139,6 +208,7 @@ function CompetitorRow({ competitor, onClick }: CompetitorRowProps) {
           alignItems: 'flex-end',
           flexShrink: 0,
           gap: 2,
+          minWidth: 64,
         }}
       >
         <PText
@@ -160,7 +230,42 @@ function CompetitorRow({ competitor, onClick }: CompetitorRowProps) {
             </PText>
           </div>
         )}
+
+        {competitor.relevance !== undefined && (
+          <RelevanceBar score={competitor.relevance} />
+        )}
       </div>
+    </div>
+  );
+}
+
+function RelevanceBar({ score }: { score: number }) {
+  const pct = Math.round(Math.max(0, Math.min(1, score)) * 100);
+  const color =
+    pct >= 70
+      ? colorConfig.primaryColor
+      : pct >= 40
+        ? colorConfig.warningColor
+        : colorConfig.textMuted;
+  return (
+    <div
+      title={`Relevance ${pct}%`}
+      style={{
+        width: 48,
+        height: 3,
+        borderRadius: 2,
+        background: colorConfig.backgroundSecondary,
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        style={{
+          width: `${pct}%`,
+          height: '100%',
+          background: color,
+          transition: 'width 0.3s ease',
+        }}
+      />
     </div>
   );
 }

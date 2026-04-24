@@ -32,10 +32,16 @@ import type {
 } from '@/types/pulse';
 import type { NormalizedPoi } from '@/lib/grabmaps';
 
-const MAX_COMPETITORS = 10;
 const MIN_COMPETITORS_FALLBACK = 3;
 const SELF_EXCLUSION_METERS = 15;
 const TOP_CATEGORIES = 5;
+
+// Relevance weights — tuned so category/name match dominates, distance is
+// secondary, rating is a tiebreaker. Weights sum to 1.
+const RELEVANCE_WEIGHT_CATEGORY = 0.35;
+const RELEVANCE_WEIGHT_NAME = 0.35;
+const RELEVANCE_WEIGHT_DISTANCE = 0.20;
+const RELEVANCE_WEIGHT_RATING = 0.10;
 
 export interface PulseSummarizerContext {
   totalCompetitorsFound: number;
@@ -114,6 +120,52 @@ function buildCategoryBreakdown(pois: NormalizedPoi[]): PulseCategoryCount[] {
     .sort((a, b) => b[1] - a[1])
     .slice(0, TOP_CATEGORIES)
     .map(([category, count]) => ({ category, count }));
+}
+
+/**
+ * Relevance score for a competitor POI vs a set of category keywords.
+ * Returns 0-1 — higher = more directly competitive.
+ *
+ * A keyword "hit" counts when the keyword appears as a substring of either
+ * the POI's category string or its name. Category hits and name hits are
+ * normalised by keyword count so the score doesn't balloon with long
+ * keyword lists. Distance and rating are tiebreakers.
+ */
+function computeRelevanceScore(
+  poi: NormalizedPoi,
+  keywords: string[],
+  distanceMeters: number,
+  maxRadiusMeters: number,
+): number {
+  const cat = (poi.category ?? '').toLowerCase();
+  const name = (poi.name ?? '').toLowerCase();
+
+  const distanceScore = 1 - Math.min(1, distanceMeters / maxRadiusMeters);
+  const ratingScore = poi.rating !== undefined ? Math.min(1, poi.rating / 5) : 0.4;
+
+  // Degenerate case: no keywords — fall back to distance + rating only so
+  // generic-mode reports still produce a sensible ordering.
+  if (keywords.length === 0) {
+    return distanceScore * 0.7 + ratingScore * 0.3;
+  }
+
+  let catHits = 0;
+  let nameHits = 0;
+  for (const kw of keywords) {
+    if (!kw) continue;
+    if (cat.includes(kw)) catHits++;
+    if (name.includes(kw)) nameHits++;
+  }
+
+  const categoryScore = catHits / keywords.length;
+  const nameScore = nameHits / keywords.length;
+
+  return (
+    categoryScore * RELEVANCE_WEIGHT_CATEGORY +
+    nameScore * RELEVANCE_WEIGHT_NAME +
+    distanceScore * RELEVANCE_WEIGHT_DISTANCE +
+    ratingScore * RELEVANCE_WEIGHT_RATING
+  );
 }
 
 function computeAccessibilityScore(
@@ -316,11 +368,37 @@ export async function buildPulseReport(opts: BuildPulseOptions): Promise<BuildPu
     ...keywordPoolNormalized.filter((p) => !isSelf(p, place.placeId, lat, lng)),
   ]);
 
+  // Keyword set for relevance scoring: prefer explicit scout keywords,
+  // fall back to the anchor place's own category split into tokens.
+  const relevanceKeywords =
+    competitorCategories && competitorCategories.length > 0
+      ? competitorCategories.map((k) => k.toLowerCase())
+      : place.category
+        ? place.category
+            .toLowerCase()
+            .split(/[\s/,&]+/)
+            .filter((t) => t.length >= 3)
+        : [];
+  const maxRadiusMeters = competitorRadiusKm * 1000;
+
   const matchedCompetitors = combinedPool
     .filter(categoryPredicate)
-    .map((p) => ({ ...p, distanceMeters: haversineMeters(p.lat, p.lng, lat, lng) }))
-    .filter((p) => p.distanceMeters <= competitorRadiusKm * 1000)
-    .sort((a, b) => a.distanceMeters - b.distanceMeters);
+    .map((p) => {
+      const distanceMeters = haversineMeters(p.lat, p.lng, lat, lng);
+      const relevance = computeRelevanceScore(
+        p,
+        relevanceKeywords,
+        distanceMeters,
+        maxRadiusMeters,
+      );
+      return { ...p, distanceMeters, relevance };
+    })
+    .filter((p) => p.distanceMeters <= maxRadiusMeters)
+    // Primary sort: relevance desc. Tiebreaker: distance asc.
+    .sort((a, b) => {
+      if (a.relevance !== b.relevance) return b.relevance - a.relevance;
+      return a.distanceMeters - b.distanceMeters;
+    });
 
   const totalCompetitorsFound = matchedCompetitors.length;
 
@@ -335,21 +413,49 @@ export async function buildPulseReport(opts: BuildPulseOptions): Promise<BuildPu
     }
   }
 
-  let competitorPois: (NormalizedPoi & { distanceMeters: number })[];
+  // Return the FULL list of matched competitors (sorted by relevance desc,
+  // distance asc as tiebreaker). Frontend decides how many to show by
+  // default and handles expand/collapse. Limiting server-side hid long-tail
+  // POIs that the user legitimately wants to browse.
+  let competitorPois: (NormalizedPoi & { distanceMeters: number; relevance: number })[];
   if (strictFilter) {
     // Scout mode: ONLY category-matched POIs, no nearest-N fallback.
-    competitorPois = matchedCompetitors.slice(0, MAX_COMPETITORS);
+    competitorPois = matchedCompetitors;
   } else if (matchedCompetitors.length >= MIN_COMPETITORS_FALLBACK) {
-    competitorPois = matchedCompetitors.slice(0, MAX_COMPETITORS);
+    competitorPois = matchedCompetitors;
   } else {
-    // Generic mode fallback: nearest-N ignoring category.
-    const nearestAll = combinedPool
-      .map((p) => ({ ...p, distanceMeters: haversineMeters(p.lat, p.lng, lat, lng) }))
-      .filter((p) => p.distanceMeters <= competitorRadiusKm * 1000)
-      .sort((a, b) => a.distanceMeters - b.distanceMeters)
-      .slice(0, MAX_COMPETITORS);
-    competitorPois = nearestAll;
+    // Generic mode fallback: when category match yields too few, include the
+    // broader nearby pool — still scored by the same relevance formula (with
+    // keywords from the anchor's category when available) so the ordering
+    // stays meaningful, not just raw distance.
+    const fallbackPool = combinedPool
+      .map((p) => {
+        const distanceMeters = haversineMeters(p.lat, p.lng, lat, lng);
+        const relevance = computeRelevanceScore(
+          p,
+          relevanceKeywords,
+          distanceMeters,
+          maxRadiusMeters,
+        );
+        return { ...p, distanceMeters, relevance };
+      })
+      .filter((p) => p.distanceMeters <= maxRadiusMeters)
+      .sort((a, b) => {
+        if (a.relevance !== b.relevance) return b.relevance - a.relevance;
+        return a.distanceMeters - b.distanceMeters;
+      });
+    competitorPois = fallbackPool;
   }
+
+  // Normalize relevance scores so the top match = 1.0 within this query's
+  // context. Raw scores are typically clustered in the 0.1-0.4 range (many
+  // keywords, each only partially matches), which makes the UI relevance
+  // bar look uniformly low. Normalization preserves ordering while giving
+  // meaningful visual contrast (top pick = full bar, long tail = short).
+  const maxRelevance = competitorPois.reduce(
+    (m, p) => (p.relevance > m ? p.relevance : m),
+    0,
+  );
 
   const competitors: PulseCompetitor[] = competitorPois.map((p) => ({
     placeId: p.placeId,
@@ -360,6 +466,7 @@ export async function buildPulseReport(opts: BuildPulseOptions): Promise<BuildPu
     lng: p.lng,
     rating: p.rating,
     address: p.address || undefined,
+    relevance: maxRelevance > 0 ? p.relevance / maxRelevance : 0,
   }));
 
   // 5. Accessibility
