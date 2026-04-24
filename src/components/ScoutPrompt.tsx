@@ -13,6 +13,16 @@ const { TextArea } = Input;
 
 interface ScoutPromptProps {
   onScoutSuccess: (response: ScoutResponse) => void;
+  /**
+   * When provided, the prompt modal opens in "compare" mode: the business
+   * type is reused from a prior scout and the user only types a new location.
+   * The synthesized prompt is "I want to open {businessType} at {location}".
+   */
+  compareForBusinessType?: string | null;
+  /** Custom trigger label — defaults to "Ask AI" (initial scout). */
+  triggerLabel?: string;
+  /** Override the button style (used when rendering as "+ Compare" chip). */
+  triggerVariant?: 'primary' | 'compare-chip';
 }
 
 const EXAMPLE_PROMPTS: readonly string[] = [
@@ -37,7 +47,13 @@ async function postScout(prompt: string): Promise<ScoutResponse> {
   return (await res.json()) as ScoutResponse;
 }
 
-export default function ScoutPrompt({ onScoutSuccess }: ScoutPromptProps) {
+export default function ScoutPrompt({
+  onScoutSuccess,
+  compareForBusinessType,
+  triggerLabel,
+  triggerVariant = 'primary',
+}: ScoutPromptProps) {
+  const isCompareMode = Boolean(compareForBusinessType);
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
   const { displayErrorMessage } = useMessage();
@@ -56,8 +72,14 @@ export default function ScoutPrompt({ onScoutSuccess }: ScoutPromptProps) {
 
   const handleSubmit = () => {
     const trimmed = prompt.trim();
-    if (trimmed.length < 5) return;
-    mutation.mutate(trimmed);
+    if (trimmed.length < 2) return;
+    // In compare mode the user only types a location. We synthesize a full
+    // prompt so the scout endpoint reuses the same parsing + filtering path.
+    const finalPrompt = isCompareMode
+      ? `I want to open ${compareForBusinessType} at ${trimmed}, analyse competitors`
+      : trimmed;
+    if (finalPrompt.length < 5) return;
+    mutation.mutate(finalPrompt);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -67,8 +89,30 @@ export default function ScoutPrompt({ onScoutSuccess }: ScoutPromptProps) {
     }
   };
 
-  return (
-    <>
+  const defaultLabel = isCompareMode ? '+ Compare location' : 'Ask AI';
+  const label = triggerLabel ?? defaultLabel;
+  const minChars = isCompareMode ? 2 : 5;
+
+  const triggerButton =
+    triggerVariant === 'compare-chip' ? (
+      <Button
+        size="small"
+        icon={<ThunderboltFilled />}
+        onClick={() => setOpen(true)}
+        style={{
+          borderRadius: 999,
+          paddingInline: 12,
+          fontSize: 12,
+          fontWeight: 600,
+          background: colorConfig.backgroundColor,
+          borderColor: colorConfig.primaryColor,
+          color: colorConfig.primaryColor,
+          flexShrink: 0,
+        }}
+      >
+        {label}
+      </Button>
+    ) : (
       <Button
         type="primary"
         icon={<ThunderboltFilled />}
@@ -82,15 +126,22 @@ export default function ScoutPrompt({ onScoutSuccess }: ScoutPromptProps) {
           flexShrink: 0,
         }}
       >
-        Ask AI
+        {label}
       </Button>
+    );
+
+  return (
+    <>
+      {triggerButton}
 
       <Modal
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <ThunderboltFilled style={{ color: colorConfig.primaryColor }} />
             <HText variant="h5" style={{ margin: 0 }}>
-              Scout a location with AI
+              {isCompareMode
+                ? `Compare at another location`
+                : 'Scout a location with AI'}
             </HText>
           </div>
         }
@@ -102,50 +153,67 @@ export default function ScoutPrompt({ onScoutSuccess }: ScoutPromptProps) {
         destroyOnClose
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 8 }}>
-          <PText variant="small" style={{ color: colorConfig.textSecondary, margin: 0 }}>
-            Describe any business you&apos;re thinking of opening and where. Works for F&B,
-            retail, services, clinics, anything. AI will resolve the location, analyze
-            direct competitors within 1km, and give you an actionable advisory.
-          </PText>
+          {isCompareMode ? (
+            <PText variant="small" style={{ color: colorConfig.textSecondary, margin: 0 }}>
+              We&apos;ll analyze the same business —{' '}
+              <strong style={{ color: colorConfig.primaryColor }}>
+                {compareForBusinessType}
+              </strong>{' '}
+              — at a different location and show the two results side-by-side so you
+              can compare recommendation scores, competitors, and accessibility.
+            </PText>
+          ) : (
+            <PText variant="small" style={{ color: colorConfig.textSecondary, margin: 0 }}>
+              Describe any business you&apos;re thinking of opening and where. Works for F&B,
+              retail, services, clinics, anything. AI will resolve the location, analyze
+              direct competitors within 1km, and give you an actionable advisory.
+            </PText>
+          )}
 
           <TextArea
             autoFocus
-            rows={4}
+            rows={isCompareMode ? 2 : 4}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="e.g. I want to build a chicken rice shop near Lavender MRT, help me analyse the competitors"
-            maxLength={500}
+            placeholder={
+              isCompareMode
+                ? 'e.g. Bugis MRT, or Tampines Mall, or Chinatown'
+                : 'e.g. I want to build a chicken rice shop near Lavender MRT, help me analyse the competitors'
+            }
+            maxLength={isCompareMode ? 100 : 500}
             showCount
             style={{ borderRadius: 10 }}
           />
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            <PText
-              variant="small"
-              style={{ width: '100%', margin: 0, color: colorConfig.textMuted }}
-            >
-              Try:
-            </PText>
-            {EXAMPLE_PROMPTS.map((example) => (
-              <Tag
-                key={example}
-                style={{
-                  cursor: 'pointer',
-                  borderRadius: 999,
-                  padding: '4px 12px',
-                  border: `1px solid ${colorConfig.borderColor}`,
-                  background: colorConfig.backgroundSecondary,
-                  whiteSpace: 'normal',
-                  maxWidth: '100%',
-                  lineHeight: 1.4,
-                }}
-                onClick={() => setPrompt(example)}
+          {!isCompareMode && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              <PText
+                variant="small"
+                style={{ width: '100%', margin: 0, color: colorConfig.textMuted }}
               >
-                {example}
-              </Tag>
-            ))}
-          </div>
+                Try:
+              </PText>
+              {EXAMPLE_PROMPTS.map((example) => (
+                <Tag
+                  key={example}
+                  style={{
+                    cursor: 'pointer',
+                    borderRadius: 999,
+                    padding: '4px 12px',
+                    border: `1px solid ${colorConfig.borderColor}`,
+                    background: colorConfig.backgroundSecondary,
+                    whiteSpace: 'normal',
+                    maxWidth: '100%',
+                    lineHeight: 1.4,
+                  }}
+                  onClick={() => setPrompt(example)}
+                >
+                  {example}
+                </Tag>
+              ))}
+            </div>
+          )}
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
             <Button onClick={() => setOpen(false)}>Cancel</Button>
@@ -154,9 +222,9 @@ export default function ScoutPrompt({ onScoutSuccess }: ScoutPromptProps) {
               icon={<SendOutlined />}
               onClick={handleSubmit}
               loading={mutation.isPending}
-              disabled={prompt.trim().length < 5}
+              disabled={prompt.trim().length < minChars}
             >
-              {mutation.isPending ? 'Analyzing…' : 'Analyze'}
+              {mutation.isPending ? 'Analyzing…' : isCompareMode ? 'Add to compare' : 'Analyze'}
             </Button>
           </div>
         </div>

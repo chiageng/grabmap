@@ -23,6 +23,18 @@ interface PulseReportProps {
   request: PulseRequest | null;
   onCompetitorClick?: (competitor: PulseCompetitor) => void;
   onClose?: () => void;
+  /**
+   * Desktop right-side offset in pixels. Used to stack multiple panels
+   * horizontally when comparing locations (panel 0 at 16, panel 1 at 452).
+   * Ignored on mobile (mobile uses full-width bottom sheet).
+   */
+  rightOffset?: number;
+  /** Narrower desktop width when stacking multiple panels. Default 420px. */
+  panelWidth?: number;
+  /** Optional header label — e.g., "Location 1" / "Location 2" when comparing. */
+  panelLabel?: string;
+  /** Hides the panel on mobile viewports (used for secondary compare panel). */
+  hideOnMobile?: boolean;
 }
 
 /**
@@ -40,7 +52,15 @@ interface PulseReportProps {
  * so html-to-image can snapshot it without the share button appearing in
  * the exported image.
  */
-export default function PulseReport({ request, onCompetitorClick, onClose }: PulseReportProps) {
+export default function PulseReport({
+  request,
+  onCompetitorClick,
+  onClose,
+  rightOffset = 16,
+  panelWidth = 420,
+  panelLabel,
+  hideOnMobile = false,
+}: PulseReportProps) {
   const { data, isLoading, error, refetch } = usePulseReport(request);
 
   // SSR-safe mobile detection — default to desktop until client hydrates
@@ -65,6 +85,9 @@ export default function PulseReport({ request, onCompetitorClick, onClose }: Pul
 
   // Return nothing when no place is selected
   if (!request) return null;
+  // Secondary compare panel is hidden on mobile — too little room to show two
+  // bottom sheets stacked. User sees primary + compare banner summary only.
+  if (hideOnMobile && isMobile) return null;
 
   /* ── Panel positioning ───────────────────────────────────────────────── */
 
@@ -86,9 +109,9 @@ export default function PulseReport({ request, onCompetitorClick, onClose }: Pul
     : {
         position: 'fixed',
         top: 72,
-        right: 16,
+        right: rightOffset,
         bottom: 16,
-        width: 420,
+        width: panelWidth,
         borderRadius: 16,
         zIndex: 200,
         background: colorConfig.backgroundColor,
@@ -147,6 +170,24 @@ export default function PulseReport({ request, onCompetitorClick, onClose }: Pul
       >
         <CloseOutlined style={{ fontSize: 13 }} />
       </button>
+
+      {/* Optional panel label (shown in compare mode) */}
+      {panelLabel && (
+        <div
+          style={{
+            padding: '14px 18px 8px',
+            background: colorConfig.primaryColor,
+            color: colorConfig.primaryForegroundColor,
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: '0.8px',
+            textTransform: 'uppercase',
+            flexShrink: 0,
+          }}
+        >
+          {panelLabel}
+        </div>
+      )}
 
       {/* Scrollable content */}
       <div

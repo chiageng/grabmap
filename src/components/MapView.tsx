@@ -26,6 +26,8 @@ interface MapViewProps {
   center?: { lat: number; lng: number };
   zoom?: number;
   selectedPlace?: { lat: number; lng: number; name: string } | null;
+  /** Optional second target pin shown alongside primary for comparison mode. */
+  secondaryPlace?: { lat: number; lng: number; name: string } | null;
   competitors?: PulseCompetitor[];
   nearestMrt?: PulseNearestTransit | null;
   heatmapPoints?: PulseHeatmapPoint[];
@@ -43,27 +45,40 @@ interface MapViewProps {
 
 /** Creates the custom HTML element for the selected-place marker (green circle). */
 function createSelectedPlaceElement(): HTMLElement {
+  return createNumberedPinElement(GRAB_GREEN);
+}
+
+/** Creates a pin that shows a number badge (for primary vs secondary in compare mode). */
+function createNumberedPinElement(background: string, label?: string): HTMLElement {
   const outer = document.createElement('div');
   outer.style.cssText = `
-    width: 24px;
-    height: 24px;
+    width: 28px;
+    height: 28px;
     border-radius: 50%;
-    background: ${GRAB_GREEN};
+    background: ${background};
     border: 3px solid #fff;
     box-shadow: 0 2px 8px rgba(0,0,0,0.35);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
+    color: #fff;
+    font-weight: 700;
+    font-size: 13px;
+    line-height: 1;
   `;
-  const inner = document.createElement('div');
-  inner.style.cssText = `
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #fff;
-  `;
-  outer.appendChild(inner);
+  if (label) {
+    outer.textContent = label;
+  } else {
+    const inner = document.createElement('div');
+    inner.style.cssText = `
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #fff;
+    `;
+    outer.appendChild(inner);
+  }
   return outer;
 }
 
@@ -137,6 +152,7 @@ const MapView = React.memo(function MapView({
   center,
   zoom = DEFAULT_ZOOM,
   selectedPlace,
+  secondaryPlace,
   competitors,
   nearestMrt,
   heatmapPoints,
@@ -146,6 +162,7 @@ const MapView = React.memo(function MapView({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const selectedMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const secondaryMarkerRef = useRef<maplibregl.Marker | null>(null);
   const competitorMarkersRef = useRef<maplibregl.Marker[]>([]);
   const mrtMarkerRef = useRef<maplibregl.Marker | null>(null);
   // Track whether the map style has finished loading so we can safely mutate sources/layers.
@@ -240,9 +257,25 @@ const MapView = React.memo(function MapView({
 
     if (!selectedPlace) return;
 
-    map.flyTo({ center: [selectedPlace.lng, selectedPlace.lat], zoom: 16 });
+    // When comparing, fit both locations into view; otherwise fly to primary.
+    if (secondaryPlace) {
+      const bounds = new maplibregl.LngLatBounds(
+        [selectedPlace.lng, selectedPlace.lat],
+        [selectedPlace.lng, selectedPlace.lat],
+      );
+      bounds.extend([secondaryPlace.lng, secondaryPlace.lat]);
+      map.fitBounds(bounds, { padding: { top: 120, bottom: 60, left: 60, right: 440 }, maxZoom: 15, duration: 900 });
+    } else {
+      map.flyTo({ center: [selectedPlace.lng, selectedPlace.lat], zoom: 16 });
+    }
 
-    const marker = new maplibregl.Marker({ element: createSelectedPlaceElement() })
+    // Primary uses a numbered "1" pin whenever a secondary is active so the
+    // user can tell them apart; otherwise the classic green dot.
+    const element = secondaryPlace
+      ? createNumberedPinElement(GRAB_GREEN, '1')
+      : createSelectedPlaceElement();
+
+    const marker = new maplibregl.Marker({ element })
       .setLngLat([selectedPlace.lng, selectedPlace.lat])
       .addTo(map);
 
@@ -252,7 +285,31 @@ const MapView = React.memo(function MapView({
       marker.remove();
       selectedMarkerRef.current = null;
     };
-  }, [selectedPlace]);
+  }, [selectedPlace, secondaryPlace]);
+
+  // ── Secondary place marker (compare mode) ─────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    secondaryMarkerRef.current?.remove();
+    secondaryMarkerRef.current = null;
+
+    if (!secondaryPlace) return;
+
+    const marker = new maplibregl.Marker({
+      element: createNumberedPinElement(MRT_BLUE, '2'),
+    })
+      .setLngLat([secondaryPlace.lng, secondaryPlace.lat])
+      .addTo(map);
+
+    secondaryMarkerRef.current = marker;
+
+    return () => {
+      marker.remove();
+      secondaryMarkerRef.current = null;
+    };
+  }, [secondaryPlace]);
 
   // ── Competitor markers ────────────────────────────────────────────────────
   useEffect(() => {
