@@ -4,7 +4,12 @@ import React, { useEffect, useRef, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { useGrabMapStyle } from '@/hooks/useGrabMapStyle';
-import type { PulseCompetitor, PulseNearestTransit, PulseHeatmapPoint } from '@/types/pulse';
+import type {
+  PulseCompetitor,
+  PulseNearestTransit,
+  PulseHeatmapPoint,
+  NavigationRoute,
+} from '@/types/pulse';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -17,6 +22,9 @@ const HEATMAP_LAYER_SECONDARY_ID = 'pulse-heatmap-layer-secondary';
 const HEATMAP_SOURCE_SECONDARY_ID = 'pulse-heatmap-source-secondary';
 const MRT_LINE_SOURCE_ID = 'pulse-mrt-line-source';
 const MRT_LINE_LAYER_ID = 'pulse-mrt-line-layer';
+const ROUTE_SOURCE_ID = 'pulse-route-source';
+const ROUTE_CASING_LAYER_ID = 'pulse-route-casing';
+const ROUTE_LAYER_ID = 'pulse-route-layer';
 
 const DEFAULT_LAT = parseFloat(process.env.NEXT_PUBLIC_DEFAULT_LAT ?? '1.3521');
 const DEFAULT_LNG = parseFloat(process.env.NEXT_PUBLIC_DEFAULT_LNG ?? '103.8198');
@@ -43,6 +51,9 @@ interface MapViewProps {
    *     direct-competitor density so cold zones indicate alternative spots
    */
   heatmapMode?: 'all' | 'competitors';
+  /** Active navigation route; when set, renders a polyline + origin pin and
+   *  fits the view to cover both endpoints. */
+  route?: NavigationRoute | null;
   onPickLocation?: (coords: { lat: number; lng: number }) => void;
 }
 
@@ -163,6 +174,7 @@ const MapView = React.memo(function MapView({
   heatmapPoints,
   secondaryHeatmapPoints,
   heatmapMode = 'all',
+  route,
   onPickLocation,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -171,6 +183,7 @@ const MapView = React.memo(function MapView({
   const secondaryMarkerRef = useRef<maplibregl.Marker | null>(null);
   const competitorMarkersRef = useRef<maplibregl.Marker[]>([]);
   const mrtMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const routeOriginMarkerRef = useRef<maplibregl.Marker | null>(null);
   // Track whether the map style has finished loading so we can safely mutate sources/layers.
   const isStyleReadyRef = useRef(false);
 
@@ -548,6 +561,101 @@ const MapView = React.memo(function MapView({
       );
     };
   }, [secondaryHeatmapPoints, heatmapMode, whenStyleReady]);
+
+  // ── Navigation route rendering ────────────────────────────────────────────
+  useEffect(() => {
+    const removeRouteLayers = (map: maplibregl.Map) => {
+      if (map.getLayer(ROUTE_LAYER_ID)) map.removeLayer(ROUTE_LAYER_ID);
+      if (map.getLayer(ROUTE_CASING_LAYER_ID)) map.removeLayer(ROUTE_CASING_LAYER_ID);
+      if (map.getSource(ROUTE_SOURCE_ID)) map.removeSource(ROUTE_SOURCE_ID);
+    };
+
+    if (!route) {
+      routeOriginMarkerRef.current?.remove();
+      routeOriginMarkerRef.current = null;
+      whenStyleReady((map) => removeRouteLayers(map));
+      return;
+    }
+
+    whenStyleReady((map) => {
+      removeRouteLayers(map);
+
+      map.addSource(ROUTE_SOURCE_ID, {
+        type: 'geojson',
+        data: {
+          type: 'Feature',
+          properties: {},
+          geometry: route.geometry,
+        },
+      });
+
+      // Casing underneath gives the route a clean edge on any base style.
+      map.addLayer({
+        id: ROUTE_CASING_LAYER_ID,
+        type: 'line',
+        source: ROUTE_SOURCE_ID,
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': 8,
+          'line-opacity': 0.95,
+        },
+      });
+
+      map.addLayer({
+        id: ROUTE_LAYER_ID,
+        type: 'line',
+        source: ROUTE_SOURCE_ID,
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': GRAB_GREEN,
+          'line-width': 5,
+          'line-opacity': 0.95,
+        },
+      });
+
+      // Fit bounds to the route geometry so the user sees the whole path.
+      const coords = route.geometry.coordinates;
+      if (coords.length >= 2) {
+        const bounds = new maplibregl.LngLatBounds(
+          coords[0] as [number, number],
+          coords[0] as [number, number],
+        );
+        for (const c of coords) {
+          bounds.extend(c as [number, number]);
+        }
+        map.fitBounds(bounds, {
+          padding: { top: 120, bottom: 60, left: 60, right: 440 },
+          maxZoom: 16,
+          duration: 900,
+        });
+      }
+    });
+
+    // Origin marker — white pin with a green border so it reads as "start".
+    const map = mapRef.current;
+    if (map) {
+      routeOriginMarkerRef.current?.remove();
+      const el = document.createElement('div');
+      el.style.cssText = `
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: #fff;
+        border: 4px solid ${GRAB_GREEN};
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      `;
+      routeOriginMarkerRef.current = new maplibregl.Marker({ element: el })
+        .setLngLat([route.originLng, route.originLat])
+        .addTo(map);
+    }
+
+    return () => {
+      routeOriginMarkerRef.current?.remove();
+      routeOriginMarkerRef.current = null;
+      whenStyleReady((m) => removeRouteLayers(m));
+    };
+  }, [route, whenStyleReady]);
 
   // ─── Render ───────────────────────────────────────────────────────────────
 

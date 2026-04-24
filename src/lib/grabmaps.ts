@@ -347,11 +347,86 @@ export async function reverseGeocode(lat: number, lng: number): Promise<PlaceSea
   };
 }
 
+/** GeoJSON-ish LineString — compatible with MapLibre without extra conversion. */
+export interface RouteLineString {
+  type: 'LineString';
+  coordinates: Array<[number, number]>; // [lng, lat]
+}
+
 /** Shape returned by getDirections. */
 export interface DirectionsResult {
   distanceMeters: number;
   durationSeconds: number;
-  geometry?: unknown;
+  /** Decoded GeoJSON LineString when geometry could be normalized. */
+  geometry?: RouteLineString;
+}
+
+/**
+ * Decodes a polyline string (precision 6 — GrabMaps' default) into an array
+ * of [lng, lat] coordinates. Uses the standard OSRM/Google polyline5 algorithm
+ * with the factor adjusted for Grab's higher-precision encoding. The precision
+ * matters: precision-5 decoding of Grab polylines yields coords 10× too large.
+ */
+function decodePolyline(str: string, precision = 6): Array<[number, number]> {
+  const factor = Math.pow(10, precision);
+  const coords: Array<[number, number]> = [];
+  let index = 0;
+  let lat = 0;
+  let lng = 0;
+
+  while (index < str.length) {
+    let result = 0;
+    let shift = 0;
+    let byte = 0;
+    do {
+      byte = str.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+    lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+
+    result = 0;
+    shift = 0;
+    do {
+      byte = str.charCodeAt(index++) - 63;
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+    lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+
+    coords.push([lng / factor, lat / factor]);
+  }
+  return coords;
+}
+
+/**
+ * Normalises Grab's geometry field into a GeoJSON LineString. Accepts:
+ *   - encoded polyline string (default from Grab)
+ *   - an object with `coordinates: [[lng,lat], ...]` (pass-through)
+ * Returns undefined if we can't make sense of the input.
+ */
+function normaliseGeometry(raw: unknown): RouteLineString | undefined {
+  if (typeof raw === 'string' && raw.length > 0) {
+    try {
+      const coords = decodePolyline(raw);
+      if (coords.length >= 2) return { type: 'LineString', coordinates: coords };
+    } catch (err) {
+      console.warn('[GrabMaps] polyline decode failed:', err);
+    }
+    return undefined;
+  }
+  if (raw && typeof raw === 'object') {
+    const g = raw as Record<string, unknown>;
+    const c = g['coordinates'];
+    if (Array.isArray(c) && c.length >= 2) {
+      const coords = c.filter(
+        (p): p is [number, number] =>
+          Array.isArray(p) && p.length === 2 && typeof p[0] === 'number' && typeof p[1] === 'number',
+      );
+      if (coords.length >= 2) return { type: 'LineString', coordinates: coords };
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -410,7 +485,7 @@ export async function getDirections(
     return {
       distanceMeters: distM,
       durationSeconds: durS,
-      geometry: (firstRoute as Record<string, unknown>)['geometry'],
+      geometry: normaliseGeometry((firstRoute as Record<string, unknown>)['geometry']),
     };
   } catch (err) {
     console.error('[GrabMaps] Directions fetch error:', err);

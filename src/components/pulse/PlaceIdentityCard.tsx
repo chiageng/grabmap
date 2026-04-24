@@ -4,10 +4,13 @@ import React from 'react';
 import { StarFilled, EnvironmentOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import { HText, PText } from '@/components/MyText';
 import { colorConfig } from '@/config/colors';
-import type { PulsePlace } from '@/types/pulse';
+import NavigateButton from '@/components/NavigateButton';
+import type { PulsePlace, NavigationRoute } from '@/types/pulse';
 
 interface PlaceIdentityCardProps {
   place: PulsePlace;
+  /** When provided, shows a Navigate button that routes here from a chosen origin. */
+  onRouteReady?: (route: NavigationRoute) => void;
 }
 
 /**
@@ -17,7 +20,7 @@ interface PlaceIdentityCardProps {
  * A 4px Grab-green left border provides the brand accent, consistent
  * with the AI summary card design for visual hierarchy.
  */
-export default function PlaceIdentityCard({ place }: PlaceIdentityCardProps) {
+export default function PlaceIdentityCard({ place, onRouteReady }: PlaceIdentityCardProps) {
   const { name, category, address, rating, hours } = place;
 
   return (
@@ -33,10 +36,23 @@ export default function PlaceIdentityCard({ place }: PlaceIdentityCardProps) {
         gap: 4,
       }}
     >
-      {/* Place name */}
-      <HText variant="h4" style={{ marginBottom: 2, color: colorConfig.textPrimary }}>
-        {name}
-      </HText>
+      {/* Place name + Navigate button on the right */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <HText
+          variant="h4"
+          style={{ marginBottom: 2, color: colorConfig.textPrimary, flex: 1, minWidth: 0 }}
+        >
+          {name}
+        </HText>
+        {onRouteReady && (
+          <NavigateButton
+            destLat={place.lat}
+            destLng={place.lng}
+            destName={name}
+            onRouteReady={onRouteReady}
+          />
+        )}
+      </div>
 
       {/* Category + rating row */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>

@@ -13,7 +13,7 @@ import AIPulseSummary from '@/components/pulse/AIPulseSummary';
 import ShareButton from '@/components/pulse/ShareButton';
 import { colorConfig } from '@/config/colors';
 import { PText } from '@/components/MyText';
-import type { PulseCompetitor, PulseRequest } from '@/types/pulse';
+import type { PulseCompetitor, PulseRequest, NavigationRoute } from '@/types/pulse';
 
 /* ── Layout constants ──────────────────────────────────────────────────── */
 
@@ -23,6 +23,8 @@ interface PulseReportProps {
   request: PulseRequest | null;
   onCompetitorClick?: (competitor: PulseCompetitor) => void;
   onClose?: () => void;
+  /** When provided, the place identity card shows a Navigate button. */
+  onRouteReady?: (route: NavigationRoute) => void;
   /**
    * Desktop right-side offset in pixels. Used to stack multiple panels
    * horizontally when comparing locations (panel 0 at 16, panel 1 at 452).
@@ -56,6 +58,7 @@ export default function PulseReport({
   request,
   onCompetitorClick,
   onClose,
+  onRouteReady,
   rightOffset = 16,
   panelWidth = 420,
   panelLabel,
@@ -253,7 +256,7 @@ export default function PulseReport({
               background: colorConfig.backgroundColor,
             }}
           >
-            <PlaceIdentityCard place={data.place} />
+            <PlaceIdentityCard place={data.place} onRouteReady={onRouteReady} />
             <RecommendationScore recommendation={data.recommendation} />
             <DensitySection density={data.density} />
             <CompetitorRadar

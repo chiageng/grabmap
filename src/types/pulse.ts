@@ -162,3 +162,21 @@ export interface ScoutResponse {
   parse: ScoutParse;
   analysis: ScoutAnalysis;
 }
+
+export interface RouteLineStringClient {
+  type: 'LineString';
+  coordinates: Array<[number, number]>;
+}
+
+export interface NavigationRoute {
+  originLat: number;
+  originLng: number;
+  destLat: number;
+  destLng: number;
+  originName?: string;
+  destName: string;
+  profile: 'driving' | 'walking';
+  distanceMeters: number;
+  durationSeconds: number;
+  geometry: RouteLineStringClient;
+}

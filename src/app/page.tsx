@@ -3,7 +3,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import dynamic from 'next/dynamic';
-import { AimOutlined, CloseOutlined, ShopOutlined } from '@ant-design/icons';
+import {
+  AimOutlined,
+  CloseOutlined,
+  ShopOutlined,
+  CompassOutlined,
+  CarOutlined,
+  UserOutlined,
+} from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
 import PlaceSearch from '@/components/PlaceSearch';
 import ScoutPrompt from '@/components/ScoutPrompt';
@@ -16,6 +23,7 @@ import type {
   PulseRequest,
   ScoutResponse,
   ScoutAnalysis,
+  NavigationRoute,
 } from '@/types/pulse';
 
 const MapView = dynamic(() => import('@/components/MapView'), { ssr: false });
@@ -39,6 +47,7 @@ interface PanelState {
 export default function HomePage() {
   const [panels, setPanels] = useState<PanelState[]>([]);
   const [searchSlot, setSearchSlot] = useState<HTMLElement | null>(null);
+  const [route, setRoute] = useState<NavigationRoute | null>(null);
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -97,9 +106,14 @@ export default function HomePage() {
     });
   };
 
-  const handleClosePrimary = () => setPanels([]);
+  const handleClosePrimary = () => {
+    setPanels([]);
+    setRoute(null);
+  };
   const handleCloseSecondary = () =>
     setPanels((prev) => (prev.length >= 2 ? [prev[0]] : prev));
+  const handleClearRoute = () => setRoute(null);
+  const handleRouteReady = (r: NavigationRoute) => setRoute(r);
 
   const seedCacheAndBuildPanel = (resp: ScoutResponse): PanelState => {
     const req: PulseRequest = {
@@ -177,6 +191,7 @@ export default function HomePage() {
         heatmapPoints={primaryData?.density.heatmapPoints}
         secondaryHeatmapPoints={secondaryData?.density.heatmapPoints}
         heatmapMode={primary?.scoutAnalysis ? 'competitors' : 'all'}
+        route={route}
         onPickLocation={handlePickLocation}
       />
 
@@ -228,6 +243,7 @@ export default function HomePage() {
         request={primary?.request ?? null}
         onCompetitorClick={handleCompetitorClick}
         onClose={handleClosePrimary}
+        onRouteReady={handleRouteReady}
         rightOffset={isComparing ? secondaryOffset : primaryOffset}
         panelWidth={panelWidth}
         panelLabel={isComparing ? 'Location 1' : undefined}
@@ -238,10 +254,20 @@ export default function HomePage() {
         <PulseReport
           request={secondary?.request ?? null}
           onClose={handleCloseSecondary}
+          onRouteReady={handleRouteReady}
           rightOffset={primaryOffset}
           panelWidth={panelWidth}
           panelLabel="Location 2"
           hideOnMobile
+        />
+      )}
+
+      {/* Active-route info chip — bottom-center floating card */}
+      {route && (
+        <RouteInfoChip
+          route={route}
+          onClear={handleClearRoute}
+          bannerRightReserve={bannerRightReserve}
         />
       )}
 
@@ -542,6 +568,132 @@ function CompareContextBanner({
         }}
       >
         <CloseOutlined />
+      </button>
+    </div>
+  );
+}
+
+interface RouteInfoChipProps {
+  route: NavigationRoute;
+  onClear: () => void;
+  bannerRightReserve: number;
+}
+
+function RouteInfoChip({ route, onClear, bannerRightReserve }: RouteInfoChipProps) {
+  const km = route.distanceMeters / 1000;
+  const distanceLabel =
+    km >= 10 ? `${km.toFixed(0)} km` : `${km.toFixed(1)} km`;
+  const totalMin = Math.round(route.durationSeconds / 60);
+  const durationLabel =
+    totalMin >= 60
+      ? `${Math.floor(totalMin / 60)}h ${totalMin % 60}m`
+      : `${totalMin} min`;
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        bottom: 24,
+        left: 16,
+        right: bannerRightReserve,
+        maxWidth: 520,
+        background: colorConfig.backgroundColor,
+        borderRadius: 14,
+        padding: '12px 16px',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+        border: `2px solid ${colorConfig.primaryColor}`,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 14,
+        zIndex: 7,
+      }}
+    >
+      <div
+        style={{
+          width: 38,
+          height: 38,
+          borderRadius: 10,
+          background: colorConfig.primaryColor,
+          color: colorConfig.primaryForegroundColor,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}
+      >
+        <CompassOutlined style={{ fontSize: 18 }} />
+      </div>
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: '0.6px',
+            textTransform: 'uppercase',
+            color: colorConfig.primaryColor,
+            marginBottom: 2,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+          }}
+        >
+          {route.profile === 'driving' ? <CarOutlined /> : <UserOutlined />}
+          Route · {route.profile === 'driving' ? 'Driving' : 'Walking'}
+        </div>
+        <div
+          style={{
+            fontSize: 14,
+            fontWeight: 600,
+            color: colorConfig.textPrimary,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {route.originName ?? 'Origin'} → {route.destName}
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 14,
+            marginTop: 4,
+            fontSize: 13,
+            color: colorConfig.textSecondary,
+          }}
+        >
+          <span>
+            <strong style={{ color: colorConfig.textPrimary }}>{distanceLabel}</strong>
+          </span>
+          <span style={{ color: colorConfig.textMuted }}>·</span>
+          <span>
+            <strong style={{ color: colorConfig.textPrimary }}>{durationLabel}</strong>
+            <span style={{ marginLeft: 4, fontSize: 11, color: colorConfig.textMuted }}>
+              typical
+            </span>
+          </span>
+        </div>
+      </div>
+
+      <button
+        onClick={onClear}
+        aria-label="Clear route"
+        style={{
+          width: 30,
+          height: 30,
+          borderRadius: 999,
+          border: 'none',
+          background: colorConfig.backgroundSecondary,
+          color: colorConfig.textMuted,
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}
+      >
+        <CloseOutlined style={{ fontSize: 12 }} />
       </button>
     </div>
   );
