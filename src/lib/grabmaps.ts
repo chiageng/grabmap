@@ -153,24 +153,53 @@ function extractLatLng(obj: RawPoi): { lat: number; lng: number } | null {
 }
 
 /**
- * Extracts the primary category string from a POI, which may be a string,
- * an array of strings, or an array of objects with a `name` field.
+ * Extracts a category string from a POI. Grab endpoints are inconsistent:
+ *   - /nearby returns: business_type (string) + categories[] (array of
+ *     objects with `category_name` key)
+ *   - /search returns: business_type (string) + category (string)
+ *
+ * Strategy: collect every category-ish string we can find, join with " / "
+ * so downstream substring matching has the widest surface area (matters
+ * for scout's keyword filter — "food" should match "food and beverage").
+ * Prefers business_type first since it's the most consistent field.
  */
 function extractCategory(obj: RawPoi): string {
-  const raw = obj['categories'] ?? obj['category'] ?? obj['type'];
+  const parts: string[] = [];
+  const seen = new Set<string>();
+  const add = (s: unknown) => {
+    if (typeof s !== 'string') return;
+    const t = s.trim();
+    if (!t) return;
+    const key = t.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    parts.push(t);
+  };
 
-  if (typeof raw === 'string' && raw.trim() !== '') return raw.trim();
+  add(obj['business_type']);
 
-  if (Array.isArray(raw) && raw.length > 0) {
-    const first = raw[0];
-    if (typeof first === 'string') return first;
-    if (first !== null && typeof first === 'object') {
-      const name = (first as Record<string, unknown>)['name'];
-      if (typeof name === 'string') return name;
+  // categories[] — array of strings OR array of { category_name } / { name }
+  const cats = obj['categories'];
+  if (Array.isArray(cats)) {
+    for (const c of cats) {
+      if (typeof c === 'string') {
+        add(c);
+      } else if (c !== null && typeof c === 'object') {
+        const co = c as Record<string, unknown>;
+        add(co['category_name']);
+        add(co['name']);
+      }
     }
+  } else if (typeof cats === 'string') {
+    add(cats);
   }
 
-  return 'Point of Interest';
+  // Flat category / type strings
+  add(obj['category']);
+  add(obj['type']);
+
+  if (parts.length === 0) return 'Point of Interest';
+  return parts.join(' / ');
 }
 
 function normalisePoi(raw: RawPoi): NormalizedPoi | null {

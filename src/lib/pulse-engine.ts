@@ -263,8 +263,18 @@ export async function buildPulseReport(opts: BuildPulseOptions): Promise<BuildPu
     }));
 
   // 3. Density
-  const filtered300 = nearby300.filter((p) => !isSelf(p, place.placeId, lat, lng));
-  const filtered1km = nearby1km.filter((p) => !isSelf(p, place.placeId, lat, lng));
+  //
+  // Grab's nearby endpoint ranks by distance but doesn't strictly enforce
+  // the `radius` param — at small radii in dense areas it still returns the
+  // limit's worth of nearest POIs, some of which may sit outside the radius.
+  // Enforce the radius client-side via haversine so totalNearby300m and
+  // totalNearby1km have the meaning their names imply.
+  const filtered300 = nearby300
+    .filter((p) => !isSelf(p, place.placeId, lat, lng))
+    .filter((p) => haversineMeters(p.lat, p.lng, lat, lng) <= 300);
+  const filtered1km = nearby1km
+    .filter((p) => !isSelf(p, place.placeId, lat, lng))
+    .filter((p) => haversineMeters(p.lat, p.lng, lat, lng) <= 1000);
 
   const categoryPredicate = (poi: NormalizedPoi): boolean => {
     if (competitorCategories && competitorCategories.length > 0) {
