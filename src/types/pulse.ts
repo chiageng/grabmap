@@ -94,3 +94,31 @@ export interface PlaceSearchResult {
 export interface PlaceSearchResponse {
   results: PlaceSearchResult[];
 }
+
+export interface ScoutParse {
+  businessType: string;
+  categoryKeywords: string[];
+  locationQuery: string;
+  intent: 'scout' | 'analyze' | 'compare';
+}
+
+export interface ScoutAnalysis {
+  businessType: string;
+  anchorName: string;
+  locationQuery: string;
+  competitorRadiusKm: number;
+  totalCompetitorsFound: number;
+  competitorsShown: number;
+  categoryKeywords: string[];
+}
+
+export interface ScoutRequest {
+  prompt: string;
+  country?: string;
+}
+
+export interface ScoutResponse {
+  report: PulseReport;
+  parse: ScoutParse;
+  analysis: ScoutAnalysis;
+}
