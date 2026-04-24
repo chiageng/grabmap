@@ -213,12 +213,21 @@ Respond ONLY with a JSON object matching this TypeScript type — no prose, no m
 
 {
   "businessType": string,         // concise noun phrase that the operator wants to open, e.g. "chicken rice stall", "specialty cafe", "bubble tea shop", "nail salon", "bookstore", "dental clinic", "yoga studio"
-  "categoryKeywords": string[],   // 4-8 lowercase keywords that are likely to appear in POI category strings for DIRECT competitors of the business type. Be generous — include synonyms, umbrella categories, and close substitutes. Examples:
-                                  //   "chicken rice stall"  → ["chicken rice", "hawker", "food stall", "restaurant", "kopitiam", "coffee shop", "food"]
-                                  //   "bubble tea shop"     → ["bubble tea", "bubble", "boba", "tea", "beverage", "drink", "dessert"]
-                                  //   "nail salon"          → ["nail", "salon", "beauty", "manicure", "spa"]
-                                  //   "bookstore"           → ["book", "bookstore", "stationery", "library"]
-                                  //   Do NOT include generic terms like "shop" or "business" alone.
+  "categoryKeywords": string[],   // 6-10 lowercase keywords that are both:
+                                  //   (a) likely to appear in Grab POI category strings for DIRECT competitors (e.g., "hawker", "coffee shop", "food court", "restaurant")
+                                  //   (b) likely to appear in POI NAMES of direct competitors (e.g., "chicken rice", "boba")
+                                  //
+                                  // ALWAYS include umbrella category terms so food-court-style POIs like Koufu, Kopitiam, or FairPrice match. Examples:
+                                  //   "chicken rice stall"  → ["chicken rice", "hawker", "food court", "coffee shop", "kopitiam", "restaurant", "eatery", "food"]
+                                  //   "bubble tea shop"     → ["bubble tea", "boba", "tea", "beverage", "drink", "dessert", "cafe"]
+                                  //   "specialty cafe"      → ["cafe", "coffee", "coffee shop", "bakery", "dessert", "restaurant", "food"]
+                                  //   "nail salon"          → ["nail", "salon", "beauty", "manicure", "pedicure", "spa", "hair"]
+                                  //   "bookstore"           → ["book", "bookstore", "stationery", "library", "gift shop"]
+                                  //   "dental clinic"       → ["dental", "dentist", "clinic", "orthodont", "oral", "medical"]
+                                  //   "convenience store"   → ["convenience", "mart", "minimart", "7-eleven", "supermarket", "grocery"]
+                                  //
+                                  // For F&B businesses ALWAYS include at least "food" and "food court" so umbrella POIs match.
+                                  // Do NOT include generic standalone terms like "shop" or "business".
   "locationQuery": string,        // the anchor place to geocode, e.g. "Lavender MRT", "Bugis", "Tampines Mall"
   "intent": "scout" | "analyze" | "compare"
 }`;

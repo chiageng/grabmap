@@ -28,6 +28,7 @@ import type {
   PulseCategoryCount,
   PulseAccessibility,
   PulseSummary,
+  PlaceSearchResult,
 } from '@/types/pulse';
 import type { NormalizedPoi } from '@/lib/grabmaps';
 
@@ -201,17 +202,65 @@ export async function buildPulseReport(opts: BuildPulseOptions): Promise<BuildPu
     };
   }
 
-  // 2. Fan-out parallel GrabMaps calls
-  // Always fetch 300m and 1km for density metrics; plus MRT.
-  const [nearby300R, nearby1kmR, mrtR] = await Promise.allSettled([
-    nearbyPlaces({ lat, lng, radiusKm: 0.3, limit: 50, rankBy: 'distance' }),
-    nearbyPlaces({ lat, lng, radiusKm: 1.0, limit: 50, rankBy: 'distance' }),
-    searchPlaces({ keyword: 'MRT', location: { lat, lng }, limit: 5, country }),
-  ]);
+  // 2. Fan-out parallel GrabMaps calls.
+  //
+  // For scout mode (competitorCategories provided) we also fire a keyword
+  // search for EACH category keyword with location bias. This massively
+  // expands coverage beyond the 50-per-call nearby cap — Grab's nearby
+  // endpoint only returns the 50 closest POIs, which in dense F&B areas
+  // can all sit within 200m and miss everything between 200m–1km. The
+  // keyword search finds POIs by name match regardless of their distance
+  // rank in a generic nearby query.
+  const keywordSearchesRun = Boolean(
+    competitorCategories && competitorCategories.length > 0,
+  );
 
-  const nearby300: NormalizedPoi[] = nearby300R.status === 'fulfilled' ? nearby300R.value : [];
-  const nearby1km: NormalizedPoi[] = nearby1kmR.status === 'fulfilled' ? nearby1kmR.value : [];
-  const mrtCandidates = mrtR.status === 'fulfilled' ? mrtR.value : [];
+  const baseCalls = [
+    nearbyPlaces({ lat, lng, radiusKm: 0.3, limit: 100, rankBy: 'distance' }),
+    nearbyPlaces({ lat, lng, radiusKm: 1.0, limit: 100, rankBy: 'distance' }),
+    searchPlaces({ keyword: 'MRT', location: { lat, lng }, limit: 5, country }),
+  ] as const;
+
+  const keywordCalls = keywordSearchesRun
+    ? (competitorCategories as string[]).map((kw) =>
+        searchPlaces({ keyword: kw, location: { lat, lng }, limit: 20, country }),
+      )
+    : [];
+
+  const settled = await Promise.allSettled([...baseCalls, ...keywordCalls]);
+
+  const nearby300: NormalizedPoi[] =
+    settled[0].status === 'fulfilled' ? (settled[0].value as NormalizedPoi[]) : [];
+  const nearby1km: NormalizedPoi[] =
+    settled[1].status === 'fulfilled' ? (settled[1].value as NormalizedPoi[]) : [];
+  const mrtCandidates =
+    settled[2].status === 'fulfilled' ? (settled[2].value as PlaceSearchResult[]) : [];
+
+  const keywordPoolResults: PlaceSearchResult[] = [];
+  for (let i = 3; i < settled.length; i++) {
+    const r = settled[i];
+    if (r.status === 'fulfilled') {
+      keywordPoolResults.push(...(r.value as PlaceSearchResult[]));
+    }
+  }
+
+  // Convert keyword-search results (PlaceSearchResult) to NormalizedPoi shape
+  // so they merge cleanly with nearbyPlaces results. Filter to 1km radius
+  // from the anchor so noise from biased-but-unbounded keyword searches
+  // doesn't pollute the competitor pool.
+  const maxCompetitorRadiusMeters = Math.max(competitorRadiusKm * 1000, 1000);
+  const keywordPoolNormalized: NormalizedPoi[] = keywordPoolResults
+    .filter(
+      (r) => haversineMeters(r.lat, r.lng, lat, lng) <= maxCompetitorRadiusMeters,
+    )
+    .map((r) => ({
+      placeId: r.placeId,
+      name: r.name,
+      category: r.category ?? '',
+      address: r.address ?? '',
+      lat: r.lat,
+      lng: r.lng,
+    }));
 
   // 3. Density
   const filtered300 = nearby300.filter((p) => !isSelf(p, place.placeId, lat, lng));
@@ -237,12 +286,23 @@ export async function buildPulseReport(opts: BuildPulseOptions): Promise<BuildPu
   const categoryBreakdown = buildCategoryBreakdown(filtered1km);
 
   // 4. Competitors
-  // Pick the POI pool based on competitorRadiusKm. 1km -> filtered1km; else filtered300.
-  const competitorPool = competitorRadiusKm >= 0.95 ? filtered1km : filtered300;
+  //
+  // Build a multi-source pool so we're not limited to just the 50 closest
+  // POIs from a single nearby call:
+  //   - filtered nearby (1km or 300m depending on competitorRadiusKm)
+  //   - keyword-search results (one per categoryKeyword, only populated in scout mode)
+  // Then dedup, filter by radius, apply the category match, and sort by distance.
+  const nearbyCompetitorPool = competitorRadiusKm >= 0.95 ? filtered1km : filtered300;
 
-  const matchedCompetitors = competitorPool
+  const combinedPool = deduplicatePois([
+    ...nearbyCompetitorPool,
+    ...keywordPoolNormalized.filter((p) => !isSelf(p, place.placeId, lat, lng)),
+  ]);
+
+  const matchedCompetitors = combinedPool
     .filter(categoryPredicate)
     .map((p) => ({ ...p, distanceMeters: haversineMeters(p.lat, p.lng, lat, lng) }))
+    .filter((p) => p.distanceMeters <= competitorRadiusKm * 1000)
     .sort((a, b) => a.distanceMeters - b.distanceMeters);
 
   const totalCompetitorsFound = matchedCompetitors.length;
@@ -255,8 +315,9 @@ export async function buildPulseReport(opts: BuildPulseOptions): Promise<BuildPu
     competitorPois = matchedCompetitors.slice(0, MAX_COMPETITORS);
   } else {
     // Generic mode fallback: nearest-N ignoring category.
-    const nearestAll = competitorPool
+    const nearestAll = combinedPool
       .map((p) => ({ ...p, distanceMeters: haversineMeters(p.lat, p.lng, lat, lng) }))
+      .filter((p) => p.distanceMeters <= competitorRadiusKm * 1000)
       .sort((a, b) => a.distanceMeters - b.distanceMeters)
       .slice(0, MAX_COMPETITORS);
     competitorPois = nearestAll;
