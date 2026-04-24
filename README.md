@@ -210,21 +210,6 @@ Web Speech API → transcribe into the existing scout prompt input → everythin
 ### B2B dashboard
 Save scouted locations, track multi-site operators, alert when a new competitor opens near a saved spot. The core `PulseReport` + `/api/pulse` infrastructure already supports this; it's a UI + auth layer. Estimated: 1 week.
 
----
-
-## Why This Wins "Smarter Places"
-
-| Criterion | PlacePulse delivers |
-|---|---|
-| Uses GrabMaps meaningfully | 6 distinct endpoints across every user flow — POI search, nearby, reverse-geo, directions, style, tiles |
-| Solves a real problem for a real user | SME location scouting — a problem Fortune 500 pays six figures to solve, with no affordable solution for small operators |
-| Technical depth | Shared engine, multi-source POI pool, defensive parsers, polyline decoder, CORS-safe proxy, fallback layers |
-| UX polish | Grab-themed panels, responsive mobile/desktop, tone-coloured sections, relevance bars, dual-heatmap comparison |
-| Innovation | AI natural-language scouting + side-by-side comparison with differentiated heatmaps is not done by any existing consumer product |
-| Completeness of demo loop | Analyze → Compare → Decide → Navigate (with Grab ride booking) — the full workflow |
-
----
-
 ## Credits
 
 Built for the Grab Hackathon — Smarter Places track. Powered by GrabMaps + Anthropic Claude.
